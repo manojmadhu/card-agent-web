@@ -6,9 +6,12 @@ import tailwindcss from "@tailwindcss/vite"
 export default defineConfig({
   base: "./",
   plugins: [react(), tailwindcss()],
-  resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
+  resolve: { alias: { "@": path.resolve(import.meta.dirname, "./src") } },
   server: {
-    // Point the platform at the card-agent FastAPI service during development.
-    proxy: { "/v1": { target: process.env.CARD_AGENT_API ?? "http://localhost:8080", changeOrigin: true } },
+    // Dev: forward API calls to the card-agent FastAPI service (CARD_AGENT_API=http://host:port npm run dev).
+    proxy: {
+      "/v1": { target: process.env.CARD_AGENT_API ?? "http://localhost:8080", changeOrigin: true },
+      "/health": { target: process.env.CARD_AGENT_API ?? "http://localhost:8080", changeOrigin: true },
+    },
   },
 })

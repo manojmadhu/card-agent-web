@@ -1,8 +1,7 @@
 import { CheckCircle2, CircleDashed, Loader2, MinusCircle, AlertTriangle, XCircle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import type { StepStatus } from "@/engine/pipeline"
-import type { Decision } from "@/engine/samples"
+import type { Decision, StepStatus } from "@/api/types"
 
 export const decisionClass: Record<Decision, string> = {
   ACCEPT: "bg-accept/12 text-accept border-accept/30",

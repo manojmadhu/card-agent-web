@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror"
 import { yaml } from "@codemirror/lang-yaml"
 import { linter, lintGutter, type Diagnostic } from "@codemirror/lint"
 import { EditorView } from "@codemirror/view"
-import { parseFamilyYaml } from "@/engine/schema"
+import { parseFamilyYaml } from "@/lib/schema"
 import { useTheme } from "@/components/theme-provider"
 
 const yamlLinter = linter((view) => {

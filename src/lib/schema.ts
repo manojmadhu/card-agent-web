@@ -1,4 +1,5 @@
-// Card-family YAML schema — mirrors card-agent/registry/<family>.yaml exactly.
+// Card-family YAML schema — mirrors card-agent/registry/<family>.yaml and the service-side checks in
+// cardagent/registry_admin.py (validate_family). Used for live linting; the service re-validates on save.
 import { z } from "zod"
 import YAML from "yaml"
 
@@ -7,15 +8,8 @@ const roi = z
   .tuple([z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1)])
   .refine(([x0, y0, x1, y1]) => x1 > x0 && y1 > y0, "roi must be [x0, y0, x1, y1] with x1>x0 and y1>y0")
 
-export const RULE_TYPES = [
-  "regex",
-  "not_expired",
-  "date_order",
-  "luhn",
-  "emirates_id_format",
-  "prefix_matches_variant",
-  "lookup",
-] as const
+/** Rule types implemented by cardagent/validate.py. */
+export const RULE_TYPES = ["regex", "not_expired", "emirates_id_format", "luhn", "prefix_matches_variant"] as const
 
 export const NORMALISERS = ["upper", "digits", "date_mm_yy", "emirates_id", "none"] as const
 
@@ -23,8 +17,12 @@ export const variantSchema = z.object({
   id: z.string().regex(/^[a-z0-9_-]+$/, "lowercase id (a-z, 0-9, _ -)"),
   name: z.string().min(1),
   body_color_rgb: rgb,
-  keywords: z.array(z.string()).default([]),
-  number_prefix: z.string().regex(/^\d*$/, "digits only").default(""),
+  keywords: z.array(z.coerce.string()).nullish().transform((x) => x ?? []),
+  number_prefix: z
+    .union([z.string(), z.number()])
+    .nullish()
+    .transform((x) => (x == null ? "" : String(x)))
+    .pipe(z.string().regex(/^\d*$/, "digits only")),
 })
 
 export const fieldSchema = z.object({
@@ -40,7 +38,6 @@ export const ruleSchema = z.object({
   type: z.enum(RULE_TYPES),
   field: z.string(),
   critical: z.boolean().default(false),
-  other_field: z.string().optional(),
 })
 
 export const familySchema = z
@@ -49,14 +46,14 @@ export const familySchema = z
     family_name: z.string().min(1),
     issuer: z.string().default(""),
     schema_version: z.number().int().default(1),
-    keywords: z.array(z.string()).min(1, "at least one keyword is needed to identify the family"),
-    negative_keywords: z.array(z.string()).default([]),
+    keywords: z.array(z.coerce.string()).min(1, "at least one keyword is needed to identify the family"),
+    negative_keywords: z.array(z.coerce.string()).nullish().transform((x) => x ?? []),
     weights: z
       .object({ text: z.number().min(0).max(1), visual: z.number().min(0).max(1), colour: z.number().min(0).max(1) })
       .default({ text: 0.55, visual: 0.3, colour: 0.15 }),
     variants: z.array(variantSchema).min(1, "at least one variant"),
-    fields: z.array(fieldSchema).default([]),
-    rules: z.array(ruleSchema).default([]),
+    fields: z.array(fieldSchema).nullish().transform((x) => x ?? []),
+    rules: z.array(ruleSchema).nullish().transform((x) => x ?? []),
   })
   .superRefine((f, ctx) => {
     const sum = f.weights.text + f.weights.visual + f.weights.colour

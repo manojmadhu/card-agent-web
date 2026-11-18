@@ -8,10 +8,11 @@ import { Slider } from "@/components/ui/slider"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { NORMALISERS, RULE_TYPES, type Family, type FieldDef, type RuleDef, type Variant } from "@/engine/schema"
-import { hexRgb, rgbHex } from "@/engine/vision"
-import { renderCard, sampleValue, specFor } from "@/engine/render"
+import { NORMALISERS, RULE_TYPES, type Family, type FieldDef, type RuleDef, type Variant } from "@/lib/schema"
+import { hexRgb, rgbHex } from "@/lib/color"
 import { CardPreview } from "@/components/card-preview"
+import { refImagePath } from "@/components/auth-image"
+import { useRefs } from "@/api/hooks"
 
 export function TagInput({ value, onChange, placeholder }: { value: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
   const [text, setText] = React.useState("")
@@ -238,18 +239,18 @@ export function FamilyForm({ value, onChange, sections = ["identity", "variants"
   )
 }
 
-/** Live render of the family template with its ROIs — the quickest way to check a layout edit. */
-export function TemplatePreview({ family, variantId }: { family: Family; variantId?: string }) {
+/** The draft's field ROIs drawn over a real enrolled reference of the variant — the quickest way to
+ *  check that a layout edit lines up with the actual card. Falls back to the variant's body colour. */
+export function TemplatePreview({ family, variantId, persisted = true }: { family: Family; variantId?: string; persisted?: boolean }) {
   const v = family.variants.find((x) => x.id === variantId) ?? family.variants[0]
-  const url = React.useMemo(() => {
-    if (!v) return null
-    try {
-      const values: Record<string, string> = {}
-      family.fields.forEach((f) => (values[f.name] = sampleValue(f, v, 0)))
-      return renderCard(specFor(family, v, values)).canvas.toDataURL("image/jpeg", 0.85)
-    } catch {
-      return null
-    }
-  }, [family, v])
-  return <CardPreview src={url} rois={family.fields.map((f) => ({ name: f.name, roi: f.roi }))} />
+  const { data: refs } = useRefs(persisted && family.family ? family.family : undefined)
+  const ref = persisted ? refs?.find((r) => r.family === family.family && r.variant === v?.id) : undefined
+  const rois = family.fields.map((f) => ({ name: f.name, roi: f.roi }))
+  if (ref) return <CardPreview path={refImagePath(ref.id, 800)} rois={rois} />
+  return (
+    <div className="relative">
+      <CardPreview src={null} rois={rois} empty="" className="border-dashed" background={v ? rgbHex(v.body_color_rgb) : undefined} />
+      <span className="absolute right-2 bottom-2 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white">no reference image yet — showing body colour</span>
+    </div>
+  )
 }

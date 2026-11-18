@@ -1,67 +1,94 @@
 import * as React from "react"
-import { Check, Search, X, ImagePlus } from "lucide-react"
-import { toast } from "sonner"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useSearchParams } from "react-router-dom"
+import { Check, ChevronLeft, ChevronRight, ImagePlus, RefreshCw, Search, X } from "lucide-react"
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
 import { DecisionBadge } from "@/components/status"
-import { FlowStrip } from "@/components/pipeline-trace"
 import { RunSheet } from "@/components/run-sheet"
-import { useStore, type RunRecord } from "@/store"
+import { EnrollDialog } from "@/components/enroll-dialog"
+import { AuthImage, runImagePath } from "@/components/auth-image"
+import { useFamilies, useReview, useRuns, type RunQuery } from "@/api/hooks"
+import type { RunSummary } from "@/api/types"
+
+const PAGE = 25
+
+function useDebounced<T>(v: T, ms = 300) {
+  const [d, setD] = React.useState(v)
+  React.useEffect(() => {
+    const t = setTimeout(() => setD(v), ms)
+    return () => clearTimeout(t)
+  }, [v, ms])
+  return d
+}
 
 export default function RunsPage() {
-  const { runs, families, updateRun, addUploads } = useStore()
-  const [tab, setTab] = React.useState("all")
-  const [q, setQ] = React.useState("")
-  const [fam, setFam] = React.useState("all")
-  const [open, setOpen] = React.useState<RunRecord | null>(null)
-  const [enroll, setEnroll] = React.useState<RunRecord | null>(null)
-  const [target, setTarget] = React.useState<{ family: string; variant: string }>({ family: "", variant: "" })
+  const [params, setParams] = useSearchParams()
+  const { families } = useFamilies()
+  const review = useReview()
+  const tab = params.get("tab") ?? "all"
+  const fam = params.get("family") ?? "all"
+  const page = Math.max(0, Number(params.get("page") ?? 0))
+  const openId = params.get("run")
+  const [q, setQ] = React.useState(params.get("q") ?? "")
+  const dq = useDebounced(q)
+  const [enroll, setEnroll] = React.useState<RunSummary | null>(null)
 
-  const list = runs.filter((r) => {
-    if (tab === "review" && (r.result.status !== "REVIEW" || r.review)) return false
-    if (tab !== "all" && tab !== "review" && r.result.status !== tab) return false
-    if (fam !== "all" && (r.result.card.family ?? "unknown") !== fam) return false
-    if (q && !`${r.label} ${r.id} ${r.result.reasons.join(" ")}`.toLowerCase().includes(q.toLowerCase())) return false
-    return true
-  })
-  const queue = runs.filter((r) => r.result.status === "REVIEW" && !r.review).length
+  const set = React.useCallback((patch: Record<string, string | null>) => {
+    setParams((p) => {
+      const n = new URLSearchParams(p)
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === "" || (k === "tab" && v === "all") || (k === "family" && v === "all") || (k === "page" && v === "0")) n.delete(k)
+        else n.set(k, v)
+      }
+      return n
+    }, { replace: true })
+  }, [setParams])
 
-  const decide = (r: RunRecord, d: "ACCEPT" | "REJECT") => {
-    updateRun(r.id, { review: { decision: d, at: new Date().toISOString() } })
-    toast.success(`Marked ${d} by reviewer`, { description: r.label })
+  React.useEffect(() => {
+    if ((params.get("q") ?? "") !== dq) set({ q: dq, page: null })
+  }, [dq]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const query: RunQuery = {
+    queue: tab === "queue" || undefined,
+    status: ["ACCEPT", "REVIEW", "REJECT"].includes(tab) ? tab : undefined,
+    reviewed: tab === "reviewed" ? true : undefined,
+    family: fam === "all" ? undefined : fam,
+    q: dq || undefined,
+    limit: PAGE,
+    offset: page * PAGE,
   }
-
-  const openEnroll = (r: RunRecord) => {
-    setEnroll(r)
-    const f = r.result.card.family ?? families[0]?.family ?? ""
-    setTarget({ family: f, variant: r.result.card.variant ?? families.find((x) => x.family === f)?.variants[0]?.id ?? "" })
-  }
+  const { data, isLoading, isFetching, error, refetch } = useRuns(query, { refetchInterval: 15_000 })
+  const pages = data ? Math.max(1, Math.ceil(data.total / PAGE)) : 1
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-4">
       <Card>
         <CardHeader>
           <CardTitle>Runs &amp; human review</CardTitle>
-          <CardDescription>Every validation with its trace. REVIEW cases wait here; reviewer corrections can be enrolled into the reference set (governance loop).</CardDescription>
+          <CardDescription>Every validation the service has processed — from the capture system and from this console. REVIEW cases wait in the queue; reviewer decisions become the ground truth for accuracy.</CardDescription>
+          <CardAction>
+            <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}><RefreshCw className={isFetching ? "animate-spin" : ""} /> Refresh</Button>
+          </CardAction>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Tabs value={tab} onValueChange={setTab}>
+            <Tabs value={tab} onValueChange={(v) => set({ tab: v, page: null })}>
               <TabsList>
-                <TabsTrigger value="all">All <Badge variant="secondary" className="ml-1">{runs.length}</Badge></TabsTrigger>
-                <TabsTrigger value="review">Review queue <Badge variant="secondary" className="ml-1">{queue}</Badge></TabsTrigger>
+                <TabsTrigger value="all">All</TabsTrigger>
+                <TabsTrigger value="queue">Review queue {data && <Badge variant="secondary" className="ml-1">{data.review_queue}</Badge>}</TabsTrigger>
                 <TabsTrigger value="ACCEPT">Accepted</TabsTrigger>
+                <TabsTrigger value="REVIEW">Review</TabsTrigger>
                 <TabsTrigger value="REJECT">Rejected</TabsTrigger>
+                <TabsTrigger value="reviewed">Reviewed</TabsTrigger>
               </TabsList>
             </Tabs>
-            <Select value={fam} onValueChange={setFam}>
+            <Select value={fam} onValueChange={(v) => set({ family: v, page: null })}>
               <SelectTrigger className="w-[170px]" size="sm"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All families</SelectItem>
@@ -71,97 +98,81 @@ export default function RunsPage() {
             </Select>
             <div className="relative ml-auto w-full max-w-xs">
               <Search className="text-muted-foreground absolute top-2.5 left-2.5 size-4" />
-              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search label, id, reason…" className="h-9 pl-8" />
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search label, run / request id, reason…" className="h-9 pl-8" />
             </div>
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[70px]" />
-                <TableHead>Card</TableHead>
-                <TableHead>Pipeline</TableHead>
-                <TableHead>Decision</TableHead>
-                <TableHead>Reasons</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {list.length === 0 && (
-                <TableRow><TableCell colSpan={6} className="text-muted-foreground h-24 text-center">No runs match.</TableCell></TableRow>
-              )}
-              {list.slice(0, 200).map((r) => (
-                <TableRow key={r.id} className="cursor-pointer" onClick={() => setOpen(r)}>
-                  <TableCell>{r.thumb && <img src={r.thumb} className="h-9 w-[57px] rounded border object-cover" />}</TableCell>
-                  <TableCell>
-                    <div className="text-sm font-medium">{r.label}</div>
-                    <div className="text-muted-foreground text-[11px]">{new Date(r.at).toLocaleString()} · {r.result.processing_ms} ms</div>
-                  </TableCell>
-                  <TableCell className="max-w-[460px]"><div className="min-w-[380px]"><FlowStrip steps={r.steps} mini /></div></TableCell>
-                  <TableCell>
-                    <div className="flex flex-col items-start gap-1">
-                      <DecisionBadge status={r.result.status} />
-                      {r.review && <span className="text-muted-foreground text-[10px]">reviewer → {r.review.decision}</span>}
-                    </div>
-                  </TableCell>
-                  <TableCell className="max-w-[200px]">
-                    <div className="flex flex-wrap gap-1">{r.result.reasons.slice(0, 3).map((x) => <Badge key={x} variant="secondary" className="font-mono text-[10px]">{x}</Badge>)}</div>
-                  </TableCell>
-                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                    {r.result.status === "REVIEW" && !r.review ? (
-                      <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="outline" className="h-7" onClick={() => decide(r, "ACCEPT")}><Check /> Accept</Button>
-                        <Button size="sm" variant="outline" className="h-7" onClick={() => decide(r, "REJECT")}><X /> Reject</Button>
-                        <Button size="sm" variant="ghost" className="h-7" onClick={() => openEnroll(r)} title="Enroll as reference"><ImagePlus /></Button>
-                      </div>
-                    ) : (
-                      <Button size="sm" variant="ghost" className="h-7" onClick={() => openEnroll(r)}><ImagePlus /> Enroll</Button>
-                    )}
-                  </TableCell>
+
+          {error && <p className="text-reject text-sm">{error.message}</p>}
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[70px]" />
+                  <TableHead>Card</TableHead>
+                  <TableHead>Identified as</TableHead>
+                  <TableHead>Decision</TableHead>
+                  <TableHead>Reasons</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {isLoading &&
+                  Array.from({ length: 6 }).map((_, i) => (
+                    <TableRow key={i}><TableCell colSpan={6}><Skeleton className="h-9 w-full" /></TableCell></TableRow>
+                  ))}
+                {data?.items.length === 0 && (
+                  <TableRow><TableCell colSpan={6} className="text-muted-foreground h-24 text-center">{tab === "queue" ? "The review queue is empty." : "No runs match."}</TableCell></TableRow>
+                )}
+                {data?.items.map((r) => (
+                  <TableRow key={r.id} className="cursor-pointer" onClick={() => set({ run: r.id })}>
+                    <TableCell>{r.has_image ? <AuthImage path={runImagePath(r.id, r.has_card ? "card" : "original", 160)} className="h-9 w-[57px] rounded border object-cover" /> : <span className="bg-muted block h-9 w-[57px] rounded border" />}</TableCell>
+                    <TableCell>
+                      <div className="max-w-[240px] truncate text-sm font-medium">{r.label || r.request_id}</div>
+                      <div className="text-muted-foreground text-[11px]">{new Date(r.created_at).toLocaleString()} · {r.processing_ms} ms · {r.source}</div>
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {r.family ? <span>{r.family}{r.variant ? ` / ${r.variant}` : " / ?"}</span> : <span className="text-muted-foreground">—</span>}
+                      {r.family_confidence != null && <div className="text-muted-foreground tabular text-[11px]">conf {r.family_confidence.toFixed(2)}</div>}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col items-start gap-1">
+                        <DecisionBadge status={r.status} />
+                        {r.review && <span className="text-muted-foreground text-[10px]">reviewer → {r.review.decision}</span>}
+                      </div>
+                    </TableCell>
+                    <TableCell className="max-w-[260px]">
+                      <div className="flex flex-wrap gap-1">{r.reasons.slice(0, 3).map((x) => <Badge key={x} variant="secondary" className="font-mono text-[10px]">{x}</Badge>)}{r.reasons.length > 3 && <span className="text-muted-foreground text-[10px]">+{r.reasons.length - 3}</span>}</div>
+                    </TableCell>
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex justify-end gap-1">
+                        {r.status === "REVIEW" && !r.review && (
+                          <>
+                            <Button size="sm" variant="outline" className="h-7" disabled={review.isPending} onClick={() => review.mutate({ id: r.id, decision: "ACCEPT" })}><Check /> Accept</Button>
+                            <Button size="sm" variant="outline" className="h-7" disabled={review.isPending} onClick={() => review.mutate({ id: r.id, decision: "REJECT" })}><X /> Reject</Button>
+                          </>
+                        )}
+                        <Button size="sm" variant="ghost" className="h-7" disabled={!r.has_card} onClick={() => setEnroll(r)} title="Enroll as reference"><ImagePlus /></Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {data && data.total > 0 && (
+            <div className="text-muted-foreground flex items-center justify-between text-xs">
+              <span>{data.offset + 1}–{Math.min(data.offset + data.items.length, data.total)} of {data.total}</span>
+              <div className="flex items-center gap-1">
+                <Button size="icon" variant="outline" className="size-8" disabled={page === 0} onClick={() => set({ page: String(page - 1) })} aria-label="Previous page"><ChevronLeft /></Button>
+                <span className="tabular px-2">page {page + 1} / {pages}</span>
+                <Button size="icon" variant="outline" className="size-8" disabled={page + 1 >= pages} onClick={() => set({ page: String(page + 1) })} aria-label="Next page"><ChevronRight /></Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
-      <RunSheet run={open} onOpenChange={(o) => !o && setOpen(null)} />
-      <Dialog open={!!enroll} onOpenChange={(o) => !o && setEnroll(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Enroll as reference card</DialogTitle>
-            <DialogDescription>The confirmed image is added to the reference set of the chosen variant; the index is rebuilt on save.</DialogDescription>
-          </DialogHeader>
-          {enroll?.thumb && <img src={enroll.thumb} className="mx-auto h-32 rounded-md border" />}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Family</Label>
-              <Select value={target.family} onValueChange={(v) => setTarget({ family: v, variant: families.find((f) => f.family === v)?.variants[0]?.id ?? "" })}>
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>{families.map((f) => <SelectItem key={f.family} value={f.family}>{f.family_name}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Variant</Label>
-              <Select value={target.variant} onValueChange={(v) => setTarget((t) => ({ ...t, variant: v }))}>
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>{families.find((f) => f.family === target.family)?.variants.map((v) => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEnroll(null)}>Cancel</Button>
-            <Button
-              disabled={!target.family || !target.variant || !enroll?.thumb}
-              onClick={() => {
-                addUploads([{ id: `review_${enroll!.id}.jpg`, family: target.family, variant: target.variant, dataUrl: enroll!.thumb!, added_at: new Date().toISOString() }])
-                toast.success("Reference enrolled", { description: `${target.family}/${target.variant} — re-indexing` })
-                setEnroll(null)
-              }}
-            >
-              Enroll
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RunSheet runId={openId} onOpenChange={(o) => !o && set({ run: null })} />
+      <EnrollDialog run={enroll} onOpenChange={(o) => !o && setEnroll(null)} />
     </div>
   )
 }

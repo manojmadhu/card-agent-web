@@ -1,18 +1,17 @@
 import * as React from "react"
 import { useNavigate } from "react-router-dom"
-import { ArrowLeft, ArrowRight, Check, ImagePlus, Sparkles } from "lucide-react"
+import { ArrowLeft, ArrowRight, Check, ImagePlus, X } from "lucide-react"
 import { toast } from "sonner"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { FamilyForm, TemplatePreview } from "@/components/family-form"
 import { YamlEditor } from "@/components/yaml-editor"
-import { useStore } from "@/store"
-import { familyToYaml, parseFamilyYaml, type Family } from "@/engine/schema"
-import { prepareUpload, type UploadedRef } from "@/engine/registry"
-import { renderReferences } from "@/engine/render"
-import { rgbHex } from "@/engine/vision"
+import { useFamilies, useFamilyFiles, useSaveFamily, useUploadRefs } from "@/api/hooks"
+import { familyToYaml, parseFamilyYaml, type Family } from "@/lib/schema"
+import { rgbHex } from "@/lib/color"
 import { cn } from "@/lib/utils"
 
 const STEPS = [
@@ -20,7 +19,7 @@ const STEPS = [
   { id: "variants", title: "Variants", desc: "Tiers, colours, prefixes" },
   { id: "fields", title: "Fields & layout", desc: "ROIs and formats" },
   { id: "rules", title: "Rules", desc: "What makes a card valid" },
-  { id: "refs", title: "Reference cards", desc: "Images to match against" },
+  { id: "refs", title: "Reference cards", desc: "Photos to match against" },
   { id: "review", title: "Review YAML", desc: "Check and create" },
 ] as const
 
@@ -49,17 +48,31 @@ const blank = (): Family => ({
   ],
 })
 
+interface Pending {
+  key: string
+  variant: string
+  file: File
+  url: string
+}
+
 export default function NewFamilyPage() {
-  const { yamls, families, saveFamily, addUploads } = useStore()
+  const { families } = useFamilies()
+  const files = useFamilyFiles()
+  const save = useSaveFamily()
+  const upload = useUploadRefs()
   const nav = useNavigate()
   const [step, setStep] = React.useState(0)
   const [fam, setFam] = React.useState<Family>(blank)
   const [yaml, setYaml] = React.useState("")
-  const [uploads, setUploads] = React.useState<UploadedRef[]>([])
+  const [pending, setPending] = React.useState<Pending[]>([])
+  const [creating, setCreating] = React.useState<{ done: number; total: number } | null>(null)
+  const exists = (id: string) => !!files.data?.some((f) => f.family === id)
+
+  React.useEffect(() => () => pending.forEach((p) => URL.revokeObjectURL(p.url)), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // keep variant display names in sync with the family name while the user hasn't customised them
   const setFamily = (f: Family) => {
-    if (f.family_name !== fam.family_name) f = { ...f, variants: f.variants.map((v) => (v.name.startsWith(fam.family_name) || !fam.family_name ? { ...v, name: `${f.family_name} ${v.id[0]?.toUpperCase()}${v.id.slice(1)}` } : v)) }
+    if (f.family_name !== fam.family_name) f = { ...f, variants: f.variants.map((v) => (v.name.startsWith(fam.family_name) || !fam.family_name ? { ...v, name: `${f.family_name} ${v.id[0]?.toUpperCase() ?? ""}${v.id.slice(1)}` } : v)) }
     setFam(f)
   }
 
@@ -69,7 +82,7 @@ export default function NewFamilyPage() {
     if (i === 0) {
       const out: string[] = []
       if (!fam.family) out.push("family id is required")
-      else if (yamls[fam.family]) out.push(`family id “${fam.family}” already exists`)
+      else if (exists(fam.family)) out.push(`family id “${fam.family}” already exists on the service`)
       if (!fam.family_name) out.push("display name is required")
       if (!fam.keywords.length) out.push("add at least one keyword")
       return out.concat(issues.filter((x) => x.path.startsWith("weights")).map((x) => x.message))
@@ -85,45 +98,53 @@ export default function NewFamilyPage() {
     setStep((s) => Math.min(STEPS.length - 1, s + 1))
   }
 
-  const create = () => {
-    const p = parseFamilyYaml(yaml)
-    if (!p.family) return toast.error("YAML has errors", { description: p.issues[0]?.message })
-    if (yamls[p.family.family]) return toast.error(`“${p.family.family}” already exists`)
-    saveFamily(p.family.family, yaml, "Created with the new-family wizard")
-    if (uploads.length) addUploads(uploads.map((u) => ({ ...u, family: p.family!.family })))
-    toast.success(`${p.family.family_name} added to the registry`, { description: "Index rebuilt — the agent can now recognise this card" })
-    nav(`/registry/${p.family.family}`)
+  const addFiles = (variant: string, list: FileList | null) => {
+    if (!list) return
+    const ok = Array.from(list).filter((f) => /^image\/(png|jpe?g)$/.test(f.type) && f.size <= 8 * 1024 * 1024)
+    if (ok.length < list.length) toast.warning(`${list.length - ok.length} file(s) skipped — JPEG/PNG up to 8 MB only`)
+    setPending((p) => [...p, ...ok.map((file) => ({ key: `${variant}:${file.name}:${file.size}:${Math.random()}`, variant, file, url: URL.createObjectURL(file) }))])
   }
 
-  const synthetic = React.useMemo(() => {
-    if (step !== 4) return {}
-    const m: Record<string, string[]> = {}
+  const create = async () => {
+    const p = parseFamilyYaml(yaml)
+    if (!p.family) return toast.error("YAML has errors", { description: p.issues[0]?.message })
+    const id = p.family.family
+    const byVariant: Record<string, Pending[]> = {}
+    for (const x of pending) if (p.family.variants.some((v) => v.id === x.variant)) (byVariant[x.variant] ??= []).push(x)
+    const groups = Object.entries(byVariant)
+    setCreating({ done: 0, total: groups.length + 1 })
     try {
-      for (const v of fam.variants) m[v.id] = renderReferences(fam, v, 3).map((r) => r.canvas.toDataURL("image/jpeg", 0.7))
-    } catch {
-      /* invalid draft */
+      await save.mutateAsync({ id, yaml, create: true })
+    } catch (e) {
+      setCreating(null)
+      return toast.error("The service rejected the family", { description: (e as Error).message })
     }
-    return m
-  }, [step, fam])
-
-  const onUpload = async (variant: string, files: FileList | null) => {
-    if (!files) return
-    const add: UploadedRef[] = []
-    for (const f of Array.from(files)) add.push({ id: `${Date.now().toString(36)}_${f.name.replace(/[^\w.-]/g, "_")}`, family: fam.family, variant, dataUrl: await prepareUpload(f), added_at: new Date().toISOString() })
-    setUploads((u) => [...u, ...add])
+    let failed = 0
+    for (const [i, [variant, items]] of groups.entries()) {
+      setCreating({ done: i + 1, total: groups.length + 1 })
+      try {
+        await upload.mutateAsync({ family: id, variant, files: items.map((x) => x.file) })
+      } catch {
+        failed++
+      }
+    }
+    setCreating(null)
+    toast.success(`${p.family.family_name} added to the registry`, { description: failed ? `${failed} reference upload(s) failed — add them from the family page.` : "The agent can now recognise this card." })
+    nav(`/registry/${id}`)
   }
 
   return (
     <div className="mx-auto max-w-[1300px] space-y-4">
       <div>
         <h2 className="text-xl font-semibold tracking-tight">Add a card family</h2>
-        <p className="text-muted-foreground text-sm">Produces <span className="font-mono">registry/{fam.family || "<id>"}.yaml</span> plus reference images — no code change, no redeploy.</p>
+        <p className="text-muted-foreground text-sm">Creates <span className="font-mono">registry/{fam.family || "<id>"}.yaml</span> and reference images on the service — no code change, no redeploy.</p>
       </div>
 
       <ol className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {STEPS.map((s, i) => (
           <li key={s.id}>
             <button
+              type="button"
               onClick={() => i < step && setStep(i)}
               className={cn("flex w-full items-center gap-2 rounded-lg border p-2.5 text-left transition-colors", i === step && "border-foreground/40 bg-accent", i < step && "hover:bg-accent/60", i > step && "opacity-60")}
             >
@@ -165,35 +186,35 @@ export default function NewFamilyPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Reference cards</CardTitle>
-                <CardDescription>Upload 5–20 clean, consented photos per variant. Until then the agent matches against synthetic renders of your template.</CardDescription>
+                <CardDescription>Add 5–20 clean, consented photos per variant. They are uploaded after the family is created; the service locates and straightens each card. You can also add them later.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {fam.variants.map((v) => (
-                  <div key={v.id} className="space-y-2 rounded-lg border p-3">
-                    <div className="flex items-center gap-2">
-                      <span className="size-3 rounded-sm border" style={{ background: rgbHex(v.body_color_rgb as [number, number, number]) }} />
-                      <span className="text-sm font-medium">{v.name}</span>
-                      <Badge variant="outline" className="font-mono text-[10px]">refs/{fam.family}/{v.id}/</Badge>
-                      <Button size="sm" variant="outline" className="ml-auto" asChild>
-                        <label className="cursor-pointer"><ImagePlus /> Upload<input type="file" multiple accept="image/*" className="hidden" onChange={(e) => onUpload(v.id, e.target.files)} /></label>
-                      </Button>
-                    </div>
-                    <div className="grid grid-cols-4 gap-2 md:grid-cols-6">
-                      {uploads.filter((u) => u.variant === v.id).map((u) => (
-                        <button key={u.id} onClick={() => setUploads((x) => x.filter((y) => y.id !== u.id))} title="click to remove" className="relative">
-                          <img src={u.dataUrl} className="aspect-[1012/638] w-full rounded border object-cover" />
-                          <Badge className="absolute top-1 left-1 h-4 px-1 text-[9px]">real</Badge>
-                        </button>
-                      ))}
-                      {(synthetic[v.id] ?? []).map((s, i) => (
-                        <div key={i} className="relative">
-                          <img src={s} className="aspect-[1012/638] w-full rounded border object-cover opacity-90" />
-                          <Badge variant="secondary" className="absolute top-1 left-1 h-4 px-1 text-[9px]"><Sparkles className="size-2.5" /> synthetic</Badge>
+                {fam.variants.map((v) => {
+                  const mine = pending.filter((p) => p.variant === v.id)
+                  return (
+                    <div key={v.id} className="space-y-2 rounded-lg border p-3">
+                      <div className="flex items-center gap-2">
+                        <span className="size-3 rounded-sm border" style={{ background: rgbHex(v.body_color_rgb) }} />
+                        <span className="text-sm font-medium">{v.name}</span>
+                        <Badge variant="outline" className="font-mono text-[10px]">refs/{fam.family}/{v.id}/</Badge>
+                        <span className={cn("text-xs", mine.length < 5 ? "text-review" : "text-muted-foreground")}>{mine.length} photo(s)</span>
+                        <Button size="sm" variant="outline" className="ml-auto" asChild>
+                          <label className="cursor-pointer"><ImagePlus /> Add<input type="file" multiple accept="image/jpeg,image/png" className="hidden" onChange={(e) => { addFiles(v.id, e.target.files); e.target.value = "" }} /></label>
+                        </Button>
+                      </div>
+                      {mine.length > 0 && (
+                        <div className="grid grid-cols-4 gap-2 md:grid-cols-6">
+                          {mine.map((p) => (
+                            <div key={p.key} className="group relative">
+                              <img src={p.url} className="aspect-[1012/638] w-full rounded border object-cover" alt={p.file.name} />
+                              <button type="button" onClick={() => { URL.revokeObjectURL(p.url); setPending((x) => x.filter((y) => y.key !== p.key)) }} className="absolute top-1 right-1 rounded bg-black/60 p-0.5 text-white opacity-0 group-hover:opacity-100" aria-label="remove"><X className="size-3" /></button>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </CardContent>
             </Card>
           )}
@@ -201,7 +222,7 @@ export default function NewFamilyPage() {
             <Card>
               <CardHeader>
                 <CardTitle>registry/{fam.family}.yaml</CardTitle>
-                <CardDescription>Final check — you can still edit the YAML directly. It is validated live.</CardDescription>
+                <CardDescription>Final check — you can still edit the YAML. The service validates it again on create. {pending.length} reference photo(s) will be uploaded.</CardDescription>
               </CardHeader>
               <CardContent>
                 <YamlEditor value={yaml} onChange={setYaml} height="520px" />
@@ -215,21 +236,27 @@ export default function NewFamilyPage() {
               <AlertDescription><ul className="list-disc pl-4">{cur.slice(0, 5).map((c) => <li key={c}>{c}</li>)}</ul></AlertDescription>
             </Alert>
           )}
+          {creating && (
+            <div className="flex items-center gap-3 text-sm">
+              <span className="text-muted-foreground whitespace-nowrap">{creating.done === 0 ? "Creating family…" : `Uploading references ${creating.done}/${creating.total - 1}`}</span>
+              <Progress value={(creating.done / creating.total) * 100} />
+            </div>
+          )}
 
           <div className="flex justify-between">
-            <Button variant="outline" disabled={step === 0} onClick={() => setStep((s) => s - 1)}><ArrowLeft /> Back</Button>
-            {step < STEPS.length - 1 ? <Button onClick={next}>Next <ArrowRight /></Button> : <Button onClick={create}><Check /> Create family &amp; reload registry</Button>}
+            <Button variant="outline" disabled={step === 0 || !!creating} onClick={() => setStep((s) => s - 1)}><ArrowLeft /> Back</Button>
+            {step < STEPS.length - 1 ? <Button onClick={next}>Next <ArrowRight /></Button> : <Button onClick={create} disabled={!!creating}><Check /> Create family &amp; reload registry</Button>}
           </div>
         </div>
 
         <div className="space-y-3 xl:sticky xl:top-4 xl:self-start">
           <Card className="gap-3">
             <CardHeader>
-              <CardTitle className="text-sm">Live template</CardTitle>
-              <CardDescription>How the agent expects this card to look</CardDescription>
+              <CardTitle className="text-sm">Layout</CardTitle>
+              <CardDescription>Field ROIs on the normalised 1012×638 card</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {fam.variants.length > 0 && <TemplatePreview family={{ ...fam, keywords: fam.keywords.length ? fam.keywords : [fam.family_name || "NEW CARD"] }} />}
+              {fam.variants.length > 0 && <TemplatePreview family={fam} persisted={false} />}
               <div className="text-muted-foreground space-y-1 text-xs">
                 <div><b className="text-foreground">{fam.family_name || "Unnamed"}</b> · {fam.variants.length} variants · {fam.fields.length} fields · {fam.rules.length} rules</div>
                 <div>{issues.length ? <span className="text-reject">{issues.length} schema issue(s)</span> : <span className="text-accept">schema valid</span>}</div>

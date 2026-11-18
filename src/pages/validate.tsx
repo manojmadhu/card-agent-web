@@ -1,12 +1,11 @@
 import * as React from "react"
-import { useSearchParams } from "react-router-dom"
-import { Play, Square, Upload, FileJson, ListTree, Timer, Copy } from "lucide-react"
+import { Link } from "react-router-dom"
+import { Camera, Copy, ExternalLink, FileJson, ListTree, Play, Square, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardAction } from "@/components/ui/card"
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -14,121 +13,105 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { CardPreview } from "@/components/card-preview"
 import { DecisionBadge } from "@/components/status"
 import { FlowStrip, StepTimeline } from "@/components/pipeline-trace"
-import { useRunner } from "@/lib/runner"
-import { useStore } from "@/store"
-import { SAMPLE_CASES, buildSample, type SampleCase } from "@/engine/samples"
+import { AuthImage, evalImagePath, runImagePath } from "@/components/auth-image"
+import { fieldRois } from "@/components/run-sheet"
+import { useValidation } from "@/hooks/use-validation"
+import { useEvalCases } from "@/api/hooks"
+import { fetchBlob } from "@/api/client"
+import type { EvalCase } from "@/api/types"
 import { cn } from "@/lib/utils"
 
-const SPEEDS = [
-  { v: "900", l: "Slow (walk-through)" },
-  { v: "450", l: "Normal" },
-  { v: "150", l: "Fast" },
-  { v: "0", l: "Instant" },
-]
+const MAX_BYTES = 8 * 1024 * 1024
+
+type Input_ = { kind: "file"; file: File; url: string } | { kind: "case"; case: EvalCase }
 
 export default function ValidatePage() {
-  const store = useStore()
-  const [params] = useSearchParams()
-  const { trace, running, run, inputUrl, stop } = useRunner()
+  const v = useValidation()
+  const cases = useEvalCases()
+  const [input, setInput] = React.useState<Input_ | null>(null)
+  const [tab, setTab] = React.useState<"upload" | "test">("upload")
+  const [requestId, setRequestId] = React.useState("")
   const [selected, setSelected] = React.useState<string | null>(null)
   const [pinned, setPinned] = React.useState(false)
-  const [sample, setSample] = React.useState<SampleCase | null>(() => SAMPLE_CASES.find((s) => s.id === params.get("sample")) ?? null)
-  const [upload, setUpload] = React.useState<{ file: File; dataUrl: string } | null>(null)
-  const [manual, setManual] = React.useState("")
-  const [tab, setTab] = React.useState<"samples" | "upload">("samples")
-  const [speed, setSpeed] = React.useState(String(store.settings.step_delay_ms))
+  const [preview, setPreview] = React.useState<string | null>(null)
 
-  const thumbs = React.useMemo(() => {
-    const m: Record<string, string> = {}
-    for (const c of SAMPLE_CASES) {
-      const s = buildSample(c, store.families)
-      if (s) {
-        const t = document.createElement("canvas")
-        t.width = 253
-        t.height = 160
-        t.getContext("2d")!.drawImage(s.canvas, 0, 0, 253, 160)
-        m[c.id] = t.toDataURL("image/jpeg", 0.8)
-      }
+  // revoke object URLs we create for local previews
+  React.useEffect(() => () => { if (input?.kind === "file") URL.revokeObjectURL(input.url) }, [input])
+
+  const { reset } = v
+  const onFile = React.useCallback((f: File | undefined | null) => {
+    if (!f) return
+    if (!/^image\/(png|jpe?g)$/.test(f.type)) return toast.error("Only JPEG or PNG photos are accepted")
+    if (f.size > MAX_BYTES) return toast.error("Photo is larger than 8 MB")
+    setInput({ kind: "file", file: f, url: URL.createObjectURL(f) })
+    setTab("upload")
+    reset()
+  }, [reset])
+
+  // paste a photo from the clipboard anywhere on the page
+  React.useEffect(() => {
+    const h = (e: ClipboardEvent) => {
+      const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith("image/"))
+      if (item) onFile(item.getAsFile())
     }
-    return m
-  }, [store.families])
+    window.addEventListener("paste", h)
+    return () => window.removeEventListener("paste", h)
+  }, [onFile])
 
-  // follow the live step unless the operator pinned one
+  // follow the live stage unless the operator pinned one; afterwards jump to the first problem
   React.useEffect(() => {
     if (pinned) return
-    const live = [...trace.steps].reverse().find((s) => s.status !== "pending" && s.status !== "skip" && s.detail)
-    const firstBad = trace.result ? trace.steps.find((s) => (s.status === "fail" || s.status === "warn") && s.detail && s.id !== "decision") : null
+    const live = [...v.steps].reverse().find((s) => s.status !== "pending" && s.status !== "skip")
+    const firstBad = v.result ? v.steps.find((s) => (s.status === "fail" || s.status === "warn") && s.id !== "decision") : null
     setSelected((firstBad ?? live)?.id ?? null)
-  }, [trace, pinned])
+  }, [v.steps, v.result, pinned])
+
+  React.useEffect(() => {
+    if (input?.kind !== "case") return setPreview(null)
+    let live = true
+    let url: string | null = null
+    fetchBlob(evalImagePath(input.case.file, 1000)).then((b) => {
+      if (!live) return
+      url = URL.createObjectURL(b)
+      setPreview(url)
+    }, () => {})
+    return () => {
+      live = false
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [input])
 
   const start = async () => {
     setPinned(false)
-    if (store.indexing) return toast.info("Registry is re-indexing, try again in a moment")
-    const delay = +speed
-    if (tab === "samples") {
-      if (!sample) return toast.error("Pick a sample card first")
-      await run({ kind: "sample", sample }, { delay })
-    } else {
-      if (!upload) return toast.error("Upload a card photo first")
-      await run({ kind: "upload", ...upload, manualText: manual }, { delay })
+    if (!input) return toast.error(tab === "upload" ? "Choose or drop a card photo first" : "Pick a labelled test image first")
+    try {
+      const blob = input.kind === "file" ? input.file : await fetchBlob(evalImagePath(input.case.file))
+      const label = input.kind === "file" ? input.file.name : `test: ${input.case.file}`
+      await v.start(blob, { label, requestId: requestId.trim() || undefined })
+    } catch (e) {
+      toast.error("Could not start the validation", { description: (e as Error).message })
     }
   }
 
-  const autoStarted = React.useRef(false)
-  React.useEffect(() => {
-    if (autoStarted.current || store.indexing || !store.index.length) return
-    if (sample && params.get("sample")) {
-      autoStarted.current = true
-      start()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.indexing, store.index])
-
-  const onFile = (f: File | undefined) => {
-    if (!f) return
-    const fr = new FileReader()
-    fr.onload = () => setUpload({ file: f, dataUrl: fr.result as string })
-    fr.readAsDataURL(f)
-  }
-
-  const fieldsStep = trace.steps.find((s) => s.id === "fields")
-  const rois = fieldsStep?.detail?.fields?.map((f: { name: string; roi: number[]; ok: boolean }) => ({ name: f.name, roi: f.roi, ok: f.ok }))
-  const res = trace.result
-  const err = (trace as { error?: string }).error
-  const totalMs = trace.steps.reduce((a, s) => a + s.ms, 0)
+  const res = v.result
+  const localUrl = input?.kind === "file" ? input.url : preview
+  const ocrRunning = v.running && v.steps.some((s) => s.status === "running" && ["normalise", "ocr", "family", "variant", "fields"].includes(s.id))
+  const totalMs = v.steps.reduce((a, s) => a + (s.status === "running" ? 0 : s.ms), 0)
 
   return (
     <div className="mx-auto grid max-w-[1400px] gap-4 xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
       <div className="space-y-4">
         <Card>
           <CardHeader>
-            <CardTitle>Card input</CardTitle>
-            <CardDescription>Choose a labelled test photo or upload your own.</CardDescription>
+            <CardTitle>Card photo</CardTitle>
+            <CardDescription>Sent to the card-agent service; every stage streams back live.</CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs value={tab} onValueChange={(v) => setTab(v as "samples" | "upload")}>
+            <Tabs value={tab} onValueChange={(x) => setTab(x as "upload" | "test")}>
               <TabsList className="w-full">
-                <TabsTrigger value="samples">Labelled samples</TabsTrigger>
-                <TabsTrigger value="upload">Upload photo</TabsTrigger>
+                <TabsTrigger value="upload">Upload / camera</TabsTrigger>
+                <TabsTrigger value="test">Labelled test set</TabsTrigger>
               </TabsList>
-              <TabsContent value="samples" className="mt-3">
-                <ScrollArea className="h-[300px] pr-3">
-                  <div className="grid grid-cols-2 gap-2">
-                    {SAMPLE_CASES.filter((c) => thumbs[c.id]).map((c) => (
-                      <button key={c.id} onClick={() => setSample(c)} className={cn("group rounded-lg border p-1.5 text-left transition-colors hover:bg-accent", sample?.id === c.id && "border-foreground/40 bg-accent ring-ring/40 ring-2")}>
-                        <img src={thumbs[c.id]} className="aspect-[1012/638] w-full rounded-md object-cover" />
-                        <div className="mt-1.5 flex items-start justify-between gap-1">
-                          <span className="line-clamp-2 text-[11px] leading-tight font-medium">{c.label}</span>
-                        </div>
-                        <div className="mt-1 flex items-center justify-between">
-                          <span className="text-muted-foreground line-clamp-1 text-[10px]">{c.note}</span>
-                        </div>
-                        <div className="mt-1"><span className="text-muted-foreground text-[10px]">expect </span><DecisionBadge status={c.expected} className="h-4 px-1 text-[9px]" /></div>
-                      </button>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </TabsContent>
               <TabsContent value="upload" className="mt-3 space-y-3">
                 <label
                   onDragOver={(e) => e.preventDefault()}
@@ -138,41 +121,69 @@ export default function ValidatePage() {
                   }}
                   className="hover:bg-accent/50 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-6 text-center"
                 >
-                  {upload ? <img src={upload.dataUrl} className="max-h-36 rounded-md" /> : <Upload className="text-muted-foreground size-6" />}
-                  <span className="text-sm font-medium">{upload ? upload.file.name : "Drop a card photo or click to browse"}</span>
-                  <span className="text-muted-foreground text-xs">JPG / PNG · stays in your browser</span>
-                  <input type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+                  {input?.kind === "file" ? <img src={input.url} className="max-h-36 rounded-md" alt="selected card" /> : <Upload className="text-muted-foreground size-6" />}
+                  <span className="text-sm font-medium">{input?.kind === "file" ? input.file.name : "Drop a card photo, paste it, or click to browse"}</span>
+                  <span className="text-muted-foreground text-xs">JPEG / PNG up to 8 MB</span>
+                  <input type="file" accept="image/jpeg,image/png" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = "" }} />
                 </label>
-                {store.settings.mode === "browser" && (
-                  <div className="space-y-1.5">
-                    <Label htmlFor="manual" className="text-xs">Printed text (optional, one line per item)</Label>
-                    <Textarea id="manual" value={manual} onChange={(e) => setManual(e.target.value)} rows={4} placeholder={"FAZAA\nGOLD\n2210457783\nFATIMA SAEED\nEXP 11/27"} className="font-mono text-xs" />
-                    <p className="text-muted-foreground text-[11px]">The browser engine has no OCR. Type what is printed, or switch to API mode in Settings to use the service's Tesseract OCR.</p>
+                <Button variant="outline" className="w-full" asChild>
+                  <label className="cursor-pointer">
+                    <Camera /> Take a photo
+                    <input type="file" accept="image/jpeg,image/png" capture="environment" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = "" }} />
+                  </label>
+                </Button>
+              </TabsContent>
+              <TabsContent value="test" className="mt-3">
+                {cases.isLoading && <p className="text-muted-foreground text-sm">Loading…</p>}
+                {cases.data && cases.data.length === 0 && <p className="text-muted-foreground text-sm">The service has no labelled set (CARD_AGENT_EVAL_DIR/manifest.json).</p>}
+                <ScrollArea className="h-[320px] pr-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    {cases.data?.map((c) => (
+                      <button
+                        type="button"
+                        key={c.file}
+                        onClick={() => { setInput({ kind: "case", case: c }); v.reset() }}
+                        className={cn("hover:bg-accent rounded-lg border p-1.5 text-left transition-colors", input?.kind === "case" && input.case.file === c.file && "border-foreground/40 bg-accent ring-ring/40 ring-2")}
+                      >
+                        <AuthImage path={evalImagePath(c.file, 320)} className="aspect-[4/3] w-full rounded-md object-cover" />
+                        <div className="mt-1.5 truncate text-[11px] font-medium">{c.file}</div>
+                        <div className="mt-1 flex items-center gap-1"><span className="text-muted-foreground text-[10px]">expected</span><DecisionBadge status={c.expected_status} className="h-4 px-1 text-[9px]" /></div>
+                      </button>
+                    ))}
                   </div>
-                )}
+                </ScrollArea>
               </TabsContent>
             </Tabs>
+            <div className="mt-4 space-y-1.5">
+              <Label htmlFor="rid" className="text-xs">Request id (optional)</Label>
+              <Input id="rid" value={requestId} onChange={(e) => setRequestId(e.target.value)} placeholder="generated by the service if empty" className="h-8 font-mono text-xs" maxLength={120} />
+            </div>
             <div className="mt-4 flex items-center gap-2">
-              {running ? (
-                <Button variant="outline" onClick={stop} className="flex-1"><Square /> Stop</Button>
+              {v.running ? (
+                <Button variant="outline" onClick={v.stop} className="flex-1"><Square /> Stop watching</Button>
               ) : (
-                <Button onClick={start} className="flex-1" disabled={store.indexing}><Play /> Run validation</Button>
+                <Button onClick={start} className="flex-1" disabled={!input}><Play /> Validate</Button>
               )}
-              <Select value={speed} onValueChange={setSpeed}>
-                <SelectTrigger className="w-[150px]"><Timer /><SelectValue /></SelectTrigger>
-                <SelectContent>{SPEEDS.map((s) => <SelectItem key={s.v} value={s.v}>{s.l}</SelectItem>)}</SelectContent>
-              </Select>
+              {input && !v.running && (
+                <Button variant="ghost" size="icon" onClick={() => { setInput(null); v.reset() }} aria-label="Clear"><X /></Button>
+              )}
             </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Normalised card</CardTitle>
-            <CardDescription>{trace.normalisedUrl ? "1012×638, field ROIs from the variant template" : "Raw input"}</CardDescription>
+            <CardTitle>{v.run?.has_card ? "Normalised card" : "Input"}</CardTitle>
+            <CardDescription>{v.run?.has_card ? "1012×638 as the agent saw it, with the variant's field ROIs" : "The photo being validated"}</CardDescription>
           </CardHeader>
           <CardContent>
-            <CardPreview src={trace.normalisedUrl ?? inputUrl} rois={rois} scanning={running && !!trace.steps.find((s) => s.status === "running" && ["ocr", "embed", "search"].includes(s.id))} />
+            <CardPreview
+              src={v.run?.has_card ? null : localUrl}
+              path={v.run?.has_card ? runImagePath(v.run.id, "card", 1012) : null}
+              rois={v.run?.has_card ? fieldRois(v.steps) : undefined}
+              fit={v.run?.has_card ? "cover" : "contain"}
+              scanning={ocrRunning}
+            />
           </CardContent>
         </Card>
       </div>
@@ -181,30 +192,38 @@ export default function ValidatePage() {
         <Card className={cn(res && (res.status === "ACCEPT" ? "border-accept/40" : res.status === "REVIEW" ? "border-review/50" : "border-reject/40"))}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              Pipeline {running && <Badge variant="outline" className="text-chart-4 animate-pulse">live</Badge>}
+              Pipeline {v.running && <Badge variant="outline" className="text-chart-4 animate-pulse">live</Badge>}
             </CardTitle>
-            <CardDescription>Family → Variant → Fields → Rules, step by step. Click any step for its evidence.</CardDescription>
+            <CardDescription>Quality → Family → Variant → Fields → Rules → Decision. Click a step for its evidence.</CardDescription>
             {res && (
               <CardAction className="flex items-center gap-2">
-                <span className="text-muted-foreground tabular text-xs">{totalMs} ms compute</span>
+                <span className="text-muted-foreground tabular text-xs">{res.processing_ms || totalMs} ms</span>
                 <DecisionBadge status={res.status} className="h-7 px-3 text-sm" />
               </CardAction>
             )}
           </CardHeader>
           <CardContent className="space-y-4">
-            <FlowStrip steps={trace.steps} selected={selected} onSelect={(id) => { setPinned(true); setSelected(id) }} />
-            {err && (
+            <FlowStrip steps={v.steps} selected={selected} onSelect={(id) => { setPinned(true); setSelected(id) }} />
+            {v.error && (
               <Alert variant="destructive">
-                <AlertTitle>Run failed</AlertTitle>
-                <AlertDescription>{err}</AlertDescription>
+                <AlertTitle>Validation failed</AlertTitle>
+                <AlertDescription>{v.error}</AlertDescription>
               </Alert>
             )}
             {res && (
               <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-4">
-                <Kv k="Family" v={res.card.family_name ?? "—"} sub={res.card.family ? `confidence ${res.card.family_confidence}` : undefined} />
-                <Kv k="Variant" v={res.card.variant_name ?? "—"} sub={res.card.variant ? `confidence ${res.card.variant_confidence}` : undefined} />
-                <Kv k="Card number" v={maskNum(res.fields.card_number?.value)} sub="PII-masked" />
+                <Kv k="Family" v={res.card?.family_name ?? "—"} sub={res.card ? `confidence ${res.card.family_confidence}` : undefined} />
+                <Kv k="Variant" v={res.card?.variant_name ?? "—"} sub={res.card ? `confidence ${res.card.variant_confidence}` : undefined} />
+                <Kv k="Card number" v={maskNum(res.fields.card_number?.value)} sub="masked" />
                 <Kv k="Reasons" v={res.reasons.length ? res.reasons.join(", ") : "none"} mono />
+              </div>
+            )}
+            {v.run && (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Stored as run <span className="font-mono">{v.run.id}</span></span>
+                <Button size="sm" variant="outline" className="h-7" asChild>
+                  <Link to={`/runs?run=${v.run.id}`}><ExternalLink /> {res?.status === "REVIEW" ? "Review this run" : "Open run"}</Link>
+                </Button>
               </div>
             )}
           </CardContent>
@@ -213,16 +232,17 @@ export default function ValidatePage() {
         <Tabs defaultValue="steps">
           <TabsList>
             <TabsTrigger value="steps"><ListTree /> Steps</TabsTrigger>
-            <TabsTrigger value="json" disabled={!res}><FileJson /> JSON output</TabsTrigger>
+            <TabsTrigger value="json" disabled={!res}><FileJson /> Result JSON</TabsTrigger>
           </TabsList>
           <TabsContent value="steps" className="mt-3">
-            <StepTimeline steps={trace.steps} selected={selected} setSelected={(id) => { setPinned(true); setSelected(id) }} />
+            <StepTimeline steps={v.steps} selected={selected} setSelected={(id) => { setPinned(true); setSelected(id) }} />
           </TabsContent>
           <TabsContent value="json" className="mt-3">
             {res && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm">Result envelope · schema_version {res.schema_version}</CardTitle>
+                  <CardDescription>Exactly what the capture system receives from POST /v1/cards/validate.</CardDescription>
                   <CardAction>
                     <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(JSON.stringify(res, null, 2)); toast.success("Copied") }}><Copy /> Copy</Button>
                   </CardAction>
@@ -247,7 +267,7 @@ function maskNum(v?: string | null) {
 function Kv({ k, v, sub, mono }: { k: string; v: string; sub?: string; mono?: boolean }) {
   return (
     <div className="min-w-0">
-      <div className="text-muted-foreground text-[11px] uppercase tracking-wide">{k}</div>
+      <div className="text-muted-foreground text-[11px] tracking-wide uppercase">{k}</div>
       <div className={cn("truncate text-sm font-medium", mono && "font-mono text-xs")} title={v}>{v}</div>
       {sub && <div className="text-muted-foreground text-[11px]">{sub}</div>}
     </div>

@@ -1,50 +1,32 @@
 import * as React from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Grid3x3 } from "lucide-react"
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
+import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import { RefGallery } from "@/components/ref-gallery"
-import { useStore } from "@/store"
-import { cosine, EMBEDDER_NAME } from "@/engine/embed"
+import { useFamilies, useRegistry, useSeparability } from "@/api/hooks"
 import { cn } from "@/lib/utils"
 
 export default function ReferencesPage() {
-  const { index, families, settings } = useStore()
+  const { families } = useFamilies()
+  const reg = useRegistry()
   const [fam, setFam] = React.useState("all")
-  const [syn, setSyn] = React.useState(true)
-  const up = index.filter((r) => r.source === "upload").length
+  const [showSep, setShowSep] = React.useState(false)
+  const sep = useSeparability(showSep)
 
-  // mean cosine similarity between every pair of variants — how separable the reference set is
-  const groups = React.useMemo(() => {
-    const g: { key: string; refs: typeof index }[] = []
-    for (const f of families) for (const v of f.variants) g.push({ key: `${f.family}/${v.id}`, refs: index.filter((r) => r.family === f.family && r.variant === v.id) })
-    return g.filter((x) => x.refs.length)
-  }, [index, families])
-  const matrix = React.useMemo(
-    () =>
-      groups.map((a) =>
-        groups.map((b) => {
-          let s = 0,
-            n = 0
-          for (const x of a.refs) for (const y of b.refs) if (x.id !== y.id) (s += cosine(x.embedding, y.embedding)), n++
-          return n ? s / n : 1
-        })
-      ),
-    [groups]
-  )
+  const variants = reg.data?.families.flatMap((f) => f.variants.map((v) => ({ ...v, family: f.family }))) ?? []
+  const total = variants.reduce((a, v) => a + v.reference_images, 0)
+  const thin = variants.filter((v) => v.reference_images < 5)
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-4">
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">Reference cards</h2>
-          <p className="text-muted-foreground text-sm">The enrolled images the agent matches against (“training” = enrolment + threshold tuning, no neural-network retraining).</p>
+          <p className="text-muted-foreground text-sm">The enrolled images the agent matches against for the visual signal. “Training” here = enrolment + threshold tuning — no model retraining.</p>
         </div>
-        <div className="ml-auto flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Switch id="syn" checked={syn} onCheckedChange={setSyn} />
-            <Label htmlFor="syn" className="text-sm">Show synthetic</Label>
-          </div>
+        <div className="ml-auto">
           <Select value={fam} onValueChange={setFam}>
             <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -59,52 +41,61 @@ export default function ReferencesPage() {
         <Card>
           <CardHeader>
             <CardTitle>Index</CardTitle>
-            <CardDescription>Linear scan, cosine similarity</CardDescription>
+            <CardDescription>Loaded by the service</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <Row k="Reference images" v={index.length} />
-            <Row k="Uploaded (real)" v={up} />
-            <Row k="Synthetic (rendered from YAML)" v={index.length - up} />
-            <Row k="Variants covered" v={groups.length} />
-            <Row k="Embedder" v={<span className="font-mono text-xs">{EMBEDDER_NAME}</span>} />
-            <Row k="Match floor" v={settings.sim_floor} />
+            {reg.isLoading ? <Skeleton className="h-32" /> : (
+              <>
+                <Row k="Registry version" v={<span className="font-mono text-xs">{reg.data?.version}</span>} />
+                <Row k="Reference images" v={total} />
+                <Row k="Variants" v={variants.length} />
+                <Row k="Variants with < 5 refs" v={<span className={thin.length ? "text-review" : ""}>{thin.length}</span>} />
+                <Row k="Visual signature" v={<span className="text-xs">ORB keypoints + HSV histogram</span>} />
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
             <CardTitle>Variant separability</CardTitle>
-            <CardDescription>Mean similarity between reference groups. Bright diagonal + dark off-diagonal = easy to tell apart; bright off-diagonal cells are look-alikes that need text/colour signals.</CardDescription>
+            <CardDescription>Mean visual similarity between reference groups, computed by the service. A bright diagonal with dark off-diagonal cells is easy to tell apart; bright off-diagonal cells are look-alikes that rely on the text and colour signals.</CardDescription>
+            {!showSep && <CardAction><Button size="sm" variant="outline" onClick={() => setShowSep(true)}><Grid3x3 /> Compute</Button></CardAction>}
           </CardHeader>
           <CardContent className="overflow-x-auto">
-            <table className="text-[10px]">
-              <thead>
-                <tr>
-                  <th />
-                  {groups.map((g) => <th key={g.key} className="h-24 w-8 align-bottom"><div className="w-8 origin-bottom-left translate-x-4 -rotate-60 font-mono font-normal whitespace-nowrap">{g.key}</div></th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {groups.map((a, i) => (
-                  <tr key={a.key}>
-                    <td className="pr-2 text-right font-mono whitespace-nowrap">{a.key}</td>
-                    {groups.map((b, j) => {
-                      const v = matrix[i][j]
-                      const t = Math.max(0, (v - 0.3) / 0.7)
-                      return (
-                        <td key={b.key} title={`${a.key} × ${b.key}: ${v.toFixed(3)}`} className={cn("size-8 border border-background text-center tabular", t > 0.6 ? "text-white" : "")} style={{ background: `color-mix(in oklch, ${i === j ? "var(--accept)" : "var(--chart-4)"} ${Math.round(t * 100)}%, var(--muted))` }}>
-                          {v >= 0.995 ? "1.0" : v.toFixed(2).slice(1)}
-                        </td>
-                      )
-                    })}
+            {!showSep && <p className="text-muted-foreground text-sm">Compares every pair of reference images (takes a few seconds on the service).</p>}
+            {showSep && sep.isLoading && <Skeleton className="h-48 w-full" />}
+            {sep.error && <p className="text-reject text-sm">{sep.error.message}</p>}
+            {sep.data && (
+              <table className="text-[10px]">
+                <thead>
+                  <tr>
+                    <th />
+                    {sep.data.groups.map((g) => <th key={g} className="h-24 w-9 align-bottom"><div className="w-9 origin-bottom-left translate-x-4 -rotate-60 font-mono font-normal whitespace-nowrap">{g}</div></th>)}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {sep.data.groups.map((a, i) => (
+                    <tr key={a}>
+                      <td className="pr-2 text-right font-mono whitespace-nowrap">{a}</td>
+                      {sep.data!.groups.map((b, j) => {
+                        const v = sep.data!.matrix[i][j]
+                        const t = Math.max(0, Math.min(1, v))
+                        return (
+                          <td key={b} title={`${a} × ${b}: ${v.toFixed(3)}`} className={cn("border-background tabular size-9 border text-center", t > 0.6 ? "text-white" : "")} style={{ background: `color-mix(in oklch, ${i === j ? "var(--accept)" : "var(--chart-4)"} ${Math.round(t * 100)}%, var(--muted))` }}>
+                            {v >= 0.995 ? "1.0" : v.toFixed(2).replace(/^0/, "")}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      <RefGallery familyId={fam === "all" ? undefined : fam} showSynthetic={syn} />
+      <RefGallery familyId={fam === "all" ? undefined : fam} />
     </div>
   )
 }
