@@ -227,7 +227,7 @@ function CommandMenu({ open, setOpen }: { open: boolean; setOpen: (o: boolean) =
             </CommandItem>
           ))}
         </CommandGroup>
-        {cards.data?.items.length ? (
+        {cards.data?.items?.length ? (
           <>
             <CommandSeparator />
             <CommandGroup heading="Card programmes">

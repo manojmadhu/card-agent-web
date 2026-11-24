@@ -82,7 +82,7 @@ export default function CardsPage() {
         <EmptyState icon={<CreditCard />} title="No programmes yet" action={isAdmin && <Button asChild><Link to="/cards/new"><Plus /> Add the first programme</Link></Button>}>
           The platform starts empty. Add a programme with its variants, fields and rules, then upload 3–20 reference images per variant.
         </EmptyState>
-      ) : (
+      ) : !cards.data ? null : (
         <Card className="py-0">
           <Table>
             <TableHeader>

@@ -28,7 +28,7 @@ export const api = {
   // ------------------------------------------------------------ 2. cards & references
   listCards: () => request<T.CardList>("/v1/cards"),
   getCard: (id: string) => request<T.CardView>(`/v1/cards/${encodeURIComponent(id)}`),
-  getCardYaml: (id: string) => request<string>(`/v1/cards/${encodeURIComponent(id)}`, { query: { format: "yaml" }, headers: { Accept: "application/yaml" } }),
+  getCardYaml: (id: string) => request<string>(`/v1/cards/${encodeURIComponent(id)}`, { query: { format: "yaml" }, headers: { Accept: "application/yaml" }, expect: "text" }),
   putCardYaml: (id: string, yaml: string, force = false) =>
     request<T.PutCardResult>(`/v1/cards/${encodeURIComponent(id)}`, { method: "PUT", body: yaml, headers: Y, query: { force: force || undefined } }),
   putCardJson: (id: string, def: T.CardFamily, force = false) =>
@@ -94,5 +94,5 @@ export const api = {
   // ------------------------------------------------------------ 7. health
   live: () => request<{ status: string }>("/health/live", { timeoutMs: 8000 }),
   ready: () => request<T.Ready>("/health/ready", { timeoutMs: 8000 }),
-  metrics: () => request<string>("/metrics", { headers: { Accept: "text/plain" } }),
+  metrics: () => request<string>("/metrics", { headers: { Accept: "text/plain" }, expect: "text" }),
 }

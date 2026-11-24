@@ -61,8 +61,14 @@ export interface RequestOptions {
   admin?: boolean
   signal?: AbortSignal
   raw?: boolean // return the Response (blobs, text)
+  /** "json" (default): any other content type is an error. "text": YAML, Prometheus metrics. */
+  expect?: "json" | "text"
   timeoutMs?: number
 }
+
+/** A 200 that is not the API: typically the console's own index.html served by a host with no /v1 proxy. */
+export const NOT_THE_API =
+  "The API address returned a web page instead of the card-agent API. Check the API base URL in Connection settings, or that the reverse proxy forwards /v1, /health and /metrics to the card-agent service."
 
 export function buildUrl(path: string, query?: RequestOptions["query"]) {
   const u = `${current.baseUrl}${path}`
@@ -111,8 +117,22 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
   }
   if (opts.raw) return res as unknown as T
   const ct = res.headers.get("content-type") ?? ""
-  if (ct.includes("application/json")) return (await res.json()) as T
-  return (await res.text()) as unknown as T
+  if (opts.expect === "text") {
+    if (ct.includes("text/html")) throw notTheApi()
+    return (await res.text()) as unknown as T
+  }
+  if (!ct.includes("json")) throw notTheApi()
+  try {
+    return (await res.json()) as T
+  } catch {
+    throw notTheApi()
+  }
+}
+
+function notTheApi() {
+  const err = new ApiError(502, NOT_THE_API)
+  listeners.forEach((l) => l(err))
+  return err
 }
 
 /** Fetch an admin-protected binary (e.g. a stored photo) as a Blob. */
@@ -152,5 +172,6 @@ export async function streamRequest(
     }
     throw new ApiError(res.status, detail)
   }
+  if (!(res.headers.get("content-type") ?? "").includes("text/event-stream")) throw new ApiError(502, NOT_THE_API)
   await parseSse(res.body, onEvent)
 }

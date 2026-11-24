@@ -82,7 +82,7 @@ export function ErrorState({ error, onRetry, compact }: { error: unknown; onRetr
   const e = error as ApiError
   const { setAuthPromptOpen } = useConnection()
   const auth = e?.status === 401 || e?.status === 403
-  const title = e?.status === 503 ? "Service unavailable" : auth ? (e.status === 401 ? "Admin token rejected" : "Admin endpoints are disabled on the server") : e?.status === 404 ? "Not found" : e?.status === 0 ? "Cannot reach the API" : "Something went wrong"
+  const title = e?.status === 503 ? "Service unavailable" : auth ? (e.status === 401 ? "Admin token rejected" : "Admin endpoints are disabled on the server") : e?.status === 404 ? "Not found" : e?.status === 0 || e?.status === 502 ? "Cannot reach the API" : "Something went wrong"
   return (
     <Card className={cn("border-reject/30", compact && "py-3")}>
       <CardContent className="flex items-start gap-3">

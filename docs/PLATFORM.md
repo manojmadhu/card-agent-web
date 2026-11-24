@@ -159,6 +159,7 @@ Error semantics, applied the same way everywhere:
 | Symptom | Where to look | Action |
 |---|---|---|
 | Red "API unavailable" banner | Health & metrics › Readiness | Qdrant or the API is down. The console retries automatically. |
+| "The API address returned a web page instead of the card-agent API" | Connection settings; reverse proxy | The console is reaching a web server that is not the API — usually a static host or `vite preview` with no proxy for `/v1`, `/health`, `/metrics`, or a wrong API base URL. Use the nginx image, `npm run dev` with `CARD_AGENT_API`, or set the API base URL (and `api.cors_origins` on the server). |
 | Review rate rising | Overview › Top reason codes, Outcomes by programme | A new card design (enrol references) or degraded photos (quality reasons) |
 | Wrong ACCEPT reported | Run detail › Review › Reject | Then build a set from reviewed runs and evaluate before changing thresholds |
 | Settings changed unexpectedly | Header tooltip "settings overridden"; Decision settings banner | Every admin change is audit-logged by the server (`cardagent.audit`) |

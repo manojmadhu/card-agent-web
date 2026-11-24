@@ -104,7 +104,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
           setRole("invalid-token")
           setAuthPromptOpen(true)
         }
-        if (e.status === 0) setReachable(false)
+        if (e.status === 0 || e.status === 502) setReachable(false)
     })
     return () => {
       off()

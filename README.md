@@ -56,6 +56,8 @@ The image serves the static build with nginx and reverse-proxies the API on the 
 - Responses carry a strict Content-Security-Policy, `X-Frame-Options: DENY`, `nosniff` and `no-referrer`.
 - `/console-health` is the container health check.
 
+If a screen says **"The API address returned a web page instead of the card-agent API"**, the host serving the console is not forwarding `/v1`, `/health` and `/metrics` to the API (for example a plain static host). Use the image above, `npm run dev`, or set the API base URL explicitly.
+
 To serve the console from a different origin than the API instead, set the API base URL in the sign-in dialog and add the console origin to `api.cors_origins` on the server.
 
 ## Quality gates
