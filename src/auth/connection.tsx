@@ -7,6 +7,26 @@ import { ApiError, getConnection, onApiError, request, setConnection } from "@/a
 
 export type Role = "unknown" | "operator" | "admin" | "admin-disabled" | "invalid-token"
 
+/** Why the API could not be reached, as precisely as a browser can tell. */
+export type Unreachable = "down" | "cors" | "mixed-content" | "not-api"
+
+/**
+ * A failed fetch looks the same whether the server is down or the browser blocked it (CORS).
+ * A `no-cors` request tells them apart: it succeeds (opaque) whenever the server answers at all.
+ */
+export async function diagnose(base: string, err: unknown): Promise<Unreachable> {
+  if ((err as ApiError)?.status === 502) return "not-api"
+  const url = `${base}/health/live`
+  if (location.protocol === "https:" && url.startsWith("http:")) return "mixed-content"
+  if (!/^https?:/.test(url)) return "down" // same-origin path: no CORS involved
+  try {
+    await fetch(url, { mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(5000) })
+    return "cors"
+  } catch {
+    return "down"
+  }
+}
+
 interface Prefs {
   maskPii: boolean
   reviewer: string
@@ -21,6 +41,7 @@ interface ConnectionState {
   reachable: boolean | null
   prefs: Prefs
   isAdmin: boolean
+  unreachable?: Unreachable
   connect: (baseUrl: string, token: string, remember: boolean) => Promise<Role>
   signOut: () => void
   setPrefs: (p: Partial<Prefs>) => void
@@ -41,11 +62,11 @@ function read(key: string) {
 }
 
 /** Probe what this token can do: admin endpoints answer 401 (bad token) or 403 (disabled on server). */
-export async function probeRole(): Promise<{ role: Role; reachable: boolean }> {
+export async function probeRole(): Promise<{ role: Role; reachable: boolean; why?: Unreachable }> {
   try {
     await request("/health/live", { timeoutMs: 6000 })
-  } catch {
-    return { role: "unknown", reachable: false }
+  } catch (e) {
+    return { role: "unknown", reachable: false, why: await diagnose(getConnection().baseUrl, e) }
   }
   if (!getConnection().adminToken) return { role: "operator", reachable: true }
   try {
@@ -74,6 +95,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   const [reachable, setReachable] = React.useState<boolean | null>(null)
   const [checking, setChecking] = React.useState(true)
   const [authPromptOpen, setAuthPromptOpen] = React.useState(false)
+  const [unreachable, setUnreachable] = React.useState<Unreachable | undefined>()
   const [prefs, setPrefsState] = React.useState<Prefs>(() => {
     try {
       return { maskPii: true, reviewer: "", ...JSON.parse(localStorage.getItem(K.prefs) ?? "{}") }
@@ -87,6 +109,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   const evaluate = React.useCallback(async () => {
     setChecking(true)
     const r = await probeRole()
+    setUnreachable(r.why)
     setRole(adminToken ? r.role : r.reachable ? "operator" : "unknown")
     setReachable(r.reachable)
     setChecking(false)
@@ -115,6 +138,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
     const clean = b.trim().replace(/\/+$/, "").replace(/\/v1$/, "")
     setConnection({ baseUrl: clean, adminToken: token.trim() })
     const r = await probeRole()
+    setUnreachable(r.why)
     const newRole: Role = token.trim() ? r.role : r.reachable ? "operator" : "unknown"
     if (newRole === "invalid-token" || !r.reachable) {
       setConnection({ baseUrl, adminToken })
@@ -161,7 +185,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
     })
 
   return (
-    <Ctx.Provider value={{ baseUrl, adminToken, remember, role, checking, reachable, prefs, isAdmin: role === "admin", connect, signOut, setPrefs, authPromptOpen, setAuthPromptOpen }}>
+    <Ctx.Provider value={{ baseUrl, adminToken, remember, role, checking, reachable, prefs, isAdmin: role === "admin", unreachable, connect, signOut, setPrefs, authPromptOpen, setAuthPromptOpen }}>
       {children}
     </Ctx.Provider>
   )

@@ -6,12 +6,36 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { useConnection, type Role } from "@/auth/connection"
+import { useConnection, type Role, type Unreachable } from "@/auth/connection"
 
 const MSG: Partial<Record<Role, string>> = {
   "invalid-token": "The server rejected this admin token (HTTP 401).",
   "admin-disabled": "Connected, but the server has admin endpoints disabled (no CARDAGENT_API__ADMIN_TOKEN). Only validation and read-only views are available.",
-  unknown: "The API did not answer. Check the URL, the network path and CORS (api.cors_origins).",
+}
+
+function UnreachableHelp({ why, base }: { why?: Unreachable; base: string }) {
+  const origin = window.location.origin
+  const api = base.trim().replace(/\/+$/, "").replace(/\/v1$/, "") || origin
+  const live = `${api}/health/live`
+  const code = "bg-muted rounded px-1 font-mono text-[11px] break-all"
+  if (why === "cors")
+    return (
+      <div className="space-y-1.5">
+        <p><b>The API is running, but the browser blocked the request (CORS).</b> Allow this console's address on the API server and restart it:</p>
+        <p className={code}>CARDAGENT_API__CORS_ORIGINS=[&quot;{origin}&quot;]</p>
+        <p className="text-xs">PowerShell: <span className={code}>$env:CARDAGENT_API__CORS_ORIGINS = '["{origin}"]'</span>. The address must match exactly, including <span className="font-mono">localhost</span> vs <span className="font-mono">127.0.0.1</span> and the port. Or avoid CORS: leave this field empty and start the console with <span className={code}>CARD_AGENT_API={api}</span>.</p>
+      </div>
+    )
+  if (why === "mixed-content")
+    return <p><b>Blocked as mixed content:</b> this console is on HTTPS, the API on plain HTTP. Serve the API over HTTPS, or put it behind the console's reverse proxy (leave this field empty).</p>
+  if (why === "not-api")
+    return <p><b>That address is a web page, not the card-agent API.</b> Point it at the API server (its <span className="font-mono">/health/live</span> must answer <span className="font-mono">{'{"status":"ok"}'}</span>).</p>
+  return (
+    <div className="space-y-1.5">
+      <p><b>Nothing answered at {api}.</b> The API is not running there, the port is wrong (the card-agent default is 8080), or a firewall blocks it.</p>
+      <p className="text-xs">Check by opening <a href={live} target="_blank" rel="noreferrer" className="underline">{live}</a> in a new tab — it should show <span className="font-mono">{'{"status":"ok"}'}</span>.</p>
+    </div>
+  )
 }
 
 export function ConnectDialog() {
@@ -62,7 +86,14 @@ export function ConnectDialog() {
               <span className="text-muted-foreground block text-xs">Off: the token is forgotten when this tab closes. Do not enable on shared computers.</span>
             </Label>
           </div>
-          {result && result !== "admin" && MSG[result] && (
+          {result === "unknown" && (
+            <Alert variant="destructive">
+              <AlertDescription className="text-sm">
+                <UnreachableHelp why={c.unreachable} base={base} />
+              </AlertDescription>
+            </Alert>
+          )}
+          {result && result !== "admin" && result !== "unknown" && MSG[result] && (
             <Alert variant={result === "admin-disabled" ? "default" : "destructive"}>
               <AlertDescription>{MSG[result]}</AlertDescription>
             </Alert>
