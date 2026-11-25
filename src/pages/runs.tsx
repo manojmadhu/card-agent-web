@@ -103,7 +103,7 @@ export default function RunsPage() {
                     </div>
                   </TableCell>
                   <TableCell><ReviewBadge status={r.review_status} /></TableCell>
-                  <TableCell className="tabular text-right text-xs">{ms(r.processing_ms)}</TableCell>
+                  <TableCell className="tabular text-right text-xs">{ms(r.processing_ms)}{(r.photos ?? 1) > 1 && <div className="text-muted-foreground">{r.photos} photos</div>}</TableCell>
                   <TableCell className="text-muted-foreground max-w-[160px] truncate font-mono text-[11px]">{r.request_id ?? "—"}</TableCell>
                 </TableRow>
               ))}

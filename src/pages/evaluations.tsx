@@ -126,14 +126,17 @@ export default function EvaluationsPage() {
       <Card className="gap-3">
         <CardHeader>
           <CardTitle className="text-sm">Zip format</CardTitle>
-          <CardDescription>A <span className="font-mono">manifest.json</span> plus the photos it lists (paths relative to the manifest), up to 500 MB.</CardDescription>
+          <CardDescription>A <span className="font-mono">manifest.json</span> plus the photos it lists (paths relative to the manifest), up to 500 MB. Two-sided cards use <span className="font-mono">files</span> instead of <span className="font-mono">file</span>: an object by side, or a list when the sides should be detected.</CardDescription>
         </CardHeader>
         <CardContent>
           <pre className="bg-muted/50 overflow-auto rounded-md p-3 font-mono text-[11px]">{`[
   {"file": "photos/001.jpg", "family": "ae.fazaa", "variant": "gold", "expected_status": "ACCEPT",
    "fields": {"card_number": "2210457783", "expiry_date": "11/27"}},
   {"file": "photos/002.jpg", "family": "ae.esaad", "variant": "platinum", "expected_status": "REJECT"},
-  {"file": "photos/003.jpg", "family": null, "variant": null, "expected_status": "REJECT"}
+  {"file": "photos/003.jpg", "family": null, "variant": null, "expected_status": "REJECT"},
+  {"files": {"front": "photos/004f.jpg", "back": "photos/004b.jpg"}, "family": "ae.gamma", "variant": "gold",
+   "expected_status": "ACCEPT", "fields": {"card_number": "4123456789"}},
+  {"files": ["photos/005a.jpg", "photos/005b.jpg"], "family": "qa.delta", "variant": "standard", "expected_status": "ACCEPT"}
 ]`}</pre>
           <p className="text-muted-foreground mt-2 text-xs">The same evaluation runs in CI with <span className="font-mono">python tools/evaluate.py --manifest set/manifest.json</span> (exit code 1 when the gate fails).</p>
         </CardContent>

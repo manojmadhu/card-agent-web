@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { AdminRequired, AuthImage, ConfirmDialog, CopyButton, DecisionBadge, ErrorState, JsonBlock, Kv, LoadingRows, PageHeader, ReviewBadge } from "@/components/common"
 import { DecisionHeadline, ResultDetails, ResultSummary } from "@/components/result-view"
+import { SideBadge } from "@/components/photos"
 import { ExistingReview, ReviewPanel } from "@/components/review-panel"
 import { useRun } from "@/api/queries"
 import { api } from "@/api/endpoints"
@@ -35,8 +36,17 @@ export default function RunDetailPage() {
   const revalidate = async () => {
     setRerunning(true)
     try {
-      const blob = await fetchBlob(api.runImagePath(r.run_id))
-      setRerun(await api.validate(blob, `run-${r.run_id}.jpg`, { store: false }))
+      const imgs = r.images ?? []
+      if (imgs.length > 1) {
+        // two-photo run: send each photo again as the side the agent used it as (sides detected if unknown)
+        const blobs = await Promise.all(imgs.map((im) => fetchBlob(api.runImagePath(r.run_id, { photo: im.photo }))))
+        const sides = imgs.map((im) => r.result.photos?.find((p) => p.photo === im.photo)?.side ?? null)
+        const photos = sides.every(Boolean) && new Set(sides).size === sides.length ? Object.fromEntries(sides.map((sd, i) => [sd!, blobs[i]])) : { images: blobs }
+        setRerun(await api.validatePhotos(photos, { store: false }))
+      } else {
+        const blob = await fetchBlob(api.runImagePath(r.run_id))
+        setRerun(await api.validate(blob, `run-${r.run_id}.jpg`, { store: false }))
+      }
     } catch (e) {
       toast.error("Re-validation failed", { description: (e as Error).message })
     } finally {
@@ -65,11 +75,28 @@ export default function RunDetailPage() {
         <div className="space-y-4">
           <Card className="gap-3">
             <CardHeader>
-              <CardTitle className="text-sm">Uploaded photo</CardTitle>
+              <CardTitle className="text-sm">{(r.images?.length ?? 1) > 1 ? `Uploaded photos (${r.images!.length})` : "Uploaded photo"}</CardTitle>
               <CardDescription>Kept for review and enrolment; deleted after the retention period.</CardDescription>
             </CardHeader>
-            <CardContent>
-              {r.has_image ? <AuthImage path={api.runImagePath(r.run_id)} alt="uploaded card photo" className="w-full rounded-lg border object-contain" /> : <div className="text-muted-foreground rounded-lg border p-8 text-center text-sm">No photo stored (runs.store_images is off, or it was pruned).</div>}
+            <CardContent className="space-y-3">
+              {!r.has_image ? (
+                <div className="text-muted-foreground rounded-lg border p-8 text-center text-sm">No photo stored (runs.store_images is off, or it was pruned).</div>
+              ) : (r.images?.length ?? 0) > 1 ? (
+                r.images!.map((im) => {
+                  const info = r.result.photos?.find((p) => p.photo === im.photo)
+                  return (
+                    <div key={im.photo} className="space-y-1">
+                      <div className="flex items-center gap-1.5 text-xs">
+                        Photo {im.photo + 1} <SideBadge side={info?.side ?? im.side} />
+                        <span className="text-muted-foreground">uploaded as “{im.upload}”{info?.side_corrected ? " · side corrected" : ""}{info && info.status !== "used" ? ` · ${info.status.replace("_", " ")}` : ""}</span>
+                      </div>
+                      <AuthImage path={api.runImagePath(r.run_id, { photo: im.photo })} alt={`photo ${im.photo + 1}`} className="w-full rounded-lg border object-contain" />
+                    </div>
+                  )
+                })
+              ) : (
+                <AuthImage path={api.runImagePath(r.run_id)} alt="uploaded card photo" className="w-full rounded-lg border object-contain" />
+              )}
             </CardContent>
           </Card>
           <Card className="gap-3">
@@ -112,7 +139,7 @@ export default function RunDetailPage() {
               <TabsTrigger value="review">Review {r.review_status === "pending" && <Badge className="bg-review text-foreground ml-1 h-4 px-1 text-[10px]">pending</Badge>}</TabsTrigger>
               <TabsTrigger value="json">JSON</TabsTrigger>
             </TabsList>
-            <TabsContent value="result" className="mt-3"><ResultDetails r={r.result} /></TabsContent>
+            <TabsContent value="result" className="mt-3"><ResultDetails r={r.result} runId={r.run_id} /></TabsContent>
             <TabsContent value="review" className="mt-3">
               <Card>
                 <CardHeader>

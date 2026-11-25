@@ -16,7 +16,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useTheme } from "@/components/theme-provider"
 import { NORMALISE, RULE_HELP, RULE_KINDS, parseCardYaml, type Issue } from "@/lib/card-schema"
-import type { CardFamily, FieldSpec, RuleSpec, VariantDef } from "@/api/types"
+import type { CardFamily, FieldSpec, RuleSpec, Side, SideDef, VariantDef } from "@/api/types"
+import { effectiveSides } from "@/lib/card-schema"
+import { SideBadge } from "@/components/photos"
 import { hexRgb, rgbHex } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
@@ -87,13 +89,15 @@ export function TagInput({ value, onChange, placeholder, upper = true }: { value
 }
 
 // ------------------------------------------------------------------ structured form
-type Section = "identity" | "variants" | "fields" | "rules"
+type Section = "identity" | "variants" | "sides" | "fields" | "rules"
 
-export function CardForm({ value, onChange, sections = ["identity", "variants", "fields", "rules"], lockId }: { value: CardFamily; onChange: (c: CardFamily) => void; sections?: Section[]; lockId?: boolean }) {
+export function CardForm({ value, onChange, sections = ["identity", "variants", "sides", "fields", "rules"], lockId }: { value: CardFamily; onChange: (c: CardFamily) => void; sections?: Section[]; lockId?: boolean }) {
   const set = <K extends keyof CardFamily>(k: K, v: CardFamily[K]) => onChange({ ...value, [k]: v })
   const setV = (i: number, p: Partial<VariantDef>) => set("variants", value.variants.map((v, j) => (j === i ? { ...v, ...p } : v)))
   const setF = (i: number, p: Partial<FieldSpec>) => set("fields", value.fields.map((v, j) => (j === i ? { ...v, ...p } : v)))
   const setR = (i: number, p: Partial<RuleSpec>) => set("rules", value.rules.map((v, j) => (j === i ? { ...v, ...p } : v)))
+  const sideIds: Side[] = value.sides?.length ? value.sides.map((x) => x.id) : ["front"]
+  const twoSided = sideIds.length > 1
 
   return (
     <div className="space-y-4">
@@ -172,11 +176,13 @@ export function CardForm({ value, onChange, sections = ["identity", "variants", 
         </Card>
       )}
 
+      {sections.includes("sides") && <SidesSection value={value} onChange={onChange} />}
+
       {sections.includes("fields") && (
         <Card>
           <CardHeader>
             <CardTitle>Fields</CardTitle>
-            <CardDescription>ROI = [x0, y0, x1, y1] as fractions of the reference card (cards are aligned to it before reading). The value must match the regex after normalisation.</CardDescription>
+            <CardDescription>ROI = [x0, y0, x1, y1] as fractions of the reference card {twoSided ? "of the field's side " : ""}(photos are aligned to it before reading). The value must match the regex after normalisation.</CardDescription>
             <CardAction>
               <Button size="sm" variant="outline" onClick={() => set("fields", [...value.fields, { name: `field_${value.fields.length + 1}`, roi: [0.05, 0.4, 0.6, 0.5], regex: ".+", required: false, normalise: "none", anchor: null, script: "latin" }])}>
                 <Plus /> Field
@@ -186,8 +192,16 @@ export function CardForm({ value, onChange, sections = ["identity", "variants", 
           <CardContent className="space-y-2">
             {value.fields.map((f, i) => (
               <div key={i} className="space-y-2 rounded-lg border p-2">
-                <div className="grid grid-cols-2 items-end gap-2 md:grid-cols-[minmax(0,1fr)_150px_110px_100px_auto_auto]">
+                <div className={cn("grid grid-cols-2 items-end gap-2", twoSided ? "md:grid-cols-[minmax(0,1fr)_110px_150px_110px_100px_auto_auto]" : "md:grid-cols-[minmax(0,1fr)_150px_110px_100px_auto_auto]")}>
                   <Field label="name"><Input value={f.name} onChange={(e) => setF(i, { name: e.target.value })} className="font-mono" /></Field>
+                  {twoSided && (
+                    <Field label="side">
+                      <Select value={f.side ?? "front"} onValueChange={(v) => setF(i, { side: v as Side })}>
+                        <SelectTrigger className="w-full" aria-label={`${f.name} side`}><SelectValue /></SelectTrigger>
+                        <SelectContent>{sideIds.map((sd) => <SelectItem key={sd} value={sd}>{sd === "back" ? "Back" : "Front"}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </Field>
+                  )}
                   <Field label="normalise">
                     <Select value={f.normalise} onValueChange={(v) => setF(i, { normalise: v as FieldSpec["normalise"] })}>
                       <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
@@ -262,6 +276,64 @@ export function CardForm({ value, onChange, sections = ["identity", "variants", 
         </Card>
       )}
     </div>
+  )
+}
+
+/** Sides (schema 2.1): front only, or front and back; each side can be forced required/optional. */
+function SidesSection({ value, onChange }: { value: CardFamily; onChange: (c: CardFamily) => void }) {
+  const two = (value.sides?.length ?? 0) > 1
+  const eff = effectiveSides(value)
+  const setTwo = (on: boolean) => {
+    if (on) onChange({ ...value, sides: [{ id: "front" }, { id: "back" }] })
+    // front only: fields that were on the back move to the front (nothing is silently dropped)
+    else onChange({ ...value, sides: undefined, fields: value.fields.map((f) => ({ ...f, side: undefined })) })
+  }
+  const setReq = (id: Side, v: string) =>
+    onChange({ ...value, sides: (value.sides ?? []).map((sd): SideDef => (sd.id === id ? { id, required: v === "auto" ? undefined : v === "required" } : sd)) })
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Sides</CardTitle>
+        <CardDescription>Where the programme prints its data. A side is required when a required field is printed on it; the agent then asks for a photo of that side (SIDE_REQUIRED).</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-2 sm:grid-cols-2">
+          {[
+            { on: false, title: "Front only", text: "Everything needed is on the front. One photo per card." },
+            { on: true, title: "Front and back", text: "Data on both sides, or only on the back. Each field says which side it is on." },
+          ].map((o) => (
+            <button key={o.title} type="button" onClick={() => setTwo(o.on)} className={cn("rounded-lg border p-3 text-left transition-colors", two === o.on ? "border-foreground/50 bg-accent ring-ring/40 ring-2" : "hover:bg-accent/50")} aria-pressed={two === o.on}>
+              <div className="text-sm font-medium">{o.title}</div>
+              <div className="text-muted-foreground text-xs">{o.text}</div>
+            </button>
+          ))}
+        </div>
+        <div className={cn("grid gap-3", two && "sm:grid-cols-2")}>
+          {eff.map((sd) => {
+            const declared = value.sides?.find((x) => x.id === sd.id)?.required
+            return (
+              <div key={sd.id} className="space-y-2 rounded-lg border p-3">
+                <div className="flex items-center gap-2">
+                  <SideBadge side={sd.id} />
+                  <Badge variant="outline" className={sd.required ? "border-reject/40" : ""}>{sd.required ? "photo required" : "photo optional"}</Badge>
+                  {two && (
+                    <Select value={declared == null ? "auto" : declared ? "required" : "optional"} onValueChange={(v) => setReq(sd.id, v)}>
+                      <SelectTrigger size="sm" className="ml-auto w-[130px]" aria-label={`${sd.id} required`}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto">Automatic</SelectItem>
+                        <SelectItem value="required">Required</SelectItem>
+                        <SelectItem value="optional">Optional</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+                <div className="text-muted-foreground text-xs">Fields: {sd.fields.length ? sd.fields.join(", ") : "none (helps identification only)"}</div>
+              </div>
+            )
+          })}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

@@ -13,6 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AdminRequired, ConfirmDialog, DecisionBadge, ErrorState, JsonBlock, LoadingRows, PageHeader, ScoreBar } from "@/components/common"
 import { GateBadge } from "@/components/evaluation-ui"
+import { SideBadge } from "@/components/photos"
+import type { Side } from "@/api/types"
 import { useEvaluation, useEvaluationSet, useEvaluations } from "@/api/queries"
 import { api } from "@/api/endpoints"
 import { useConnection } from "@/auth/connection"
@@ -173,9 +175,19 @@ export default function EvaluationDetailPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {rows.map((x) => (
-                      <TableRow key={x.file} className={cn(x.expected !== x.got && "bg-reject/5")}>
-                        <TableCell className="max-w-48 truncate font-mono text-xs">{x.file}</TableCell>
+                    {rows.map((x, i) => (
+                      <TableRow key={`${x.file}-${i}`} className={cn(x.expected !== x.got && "bg-reject/5")}>
+                        <TableCell className="max-w-56 font-mono text-xs">
+                          {x.files ? (
+                            Array.isArray(x.files) ? (
+                              <div className="space-y-0.5">{x.files.map((f) => <div key={f} className="truncate" title={f}>{f} <span className="text-muted-foreground font-sans">(side detected)</span></div>)}</div>
+                            ) : (
+                              <div className="space-y-0.5">{Object.entries(x.files).map(([sd, f]) => <div key={sd} className="flex items-center gap-1 truncate" title={f}><SideBadge side={sd as Side} /> {f}</div>)}</div>
+                            )
+                          ) : (
+                            <div className="truncate" title={x.file}>{x.file}</div>
+                          )}
+                        </TableCell>
                         <TableCell><DecisionBadge status={x.expected} /></TableCell>
                         <TableCell><DecisionBadge status={x.got} /></TableCell>
                         <TableCell className="font-mono text-xs">{x.expected_family ? `${x.expected_family}/${x.expected_variant ?? "—"}` : "none"}</TableCell>

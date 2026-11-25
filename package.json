@@ -11,6 +11,7 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "e2e": "node e2e/console.e2e.mjs",
+    "e2e:two-sided": "node e2e/two-sided.e2e.mjs",
     "seed": "python3 scripts/seed_demo.py"
   },
   "dependencies": {

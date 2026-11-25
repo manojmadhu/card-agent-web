@@ -11,7 +11,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { useCard, useCards, useReviewMutation } from "@/api/queries"
-import type { RunDetail } from "@/api/types"
+import type { RunDetail, Side } from "@/api/types"
+import { SideBadge } from "@/components/photos"
+import { api } from "@/api/endpoints"
+import { AuthImage } from "@/components/common"
 import { useConnection } from "@/auth/connection"
 import { dateTime, maskValue } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -26,7 +29,11 @@ export function ExistingReview({ run }: { run: RunDetail }) {
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" className={r.decision === "accept" ? "text-accept" : "text-reject"}>reviewer: {r.decision}</Badge>
         <span className="text-muted-foreground text-xs">{r.reviewer ?? "unnamed reviewer"} · {dateTime(r.reviewed_at)}</span>
-        {r.enrolled && <Badge variant="secondary">enrolled as reference ({r.enrolled.status})</Badge>}
+        {r.enrolled_photos?.length ? (
+        <Badge variant="secondary">enrolled {r.enrolled_photos.map((e) => `${e.side} (${e.status})`).join(" + ")}</Badge>
+      ) : r.enrolled ? (
+        <Badge variant="secondary">enrolled as reference ({r.enrolled.status})</Badge>
+      ) : null}
       </div>
       {r.decision === "accept" && <div className="text-xs">Identified as <span className="font-mono">{r.family}/{r.variant}</span></div>}
       {Object.keys(r.fields ?? {}).length > 0 && (
@@ -46,6 +53,10 @@ export function ReviewPanel({ run, onDone, compact }: { run: RunDetail; onDone?:
   const [note, setNote] = React.useState("")
   const [enroll, setEnroll] = React.useState(false)
   const [fields, setFields] = React.useState<Record<string, string>>({})
+  // 2.1: the side each stored photo will be enrolled as (defaults to the side the agent used it as)
+  const runPhotos = run.result?.photos ?? []
+  const agentSides = React.useMemo(() => Object.fromEntries(runPhotos.map((p) => [String(p.photo), p.side])), [run.run_id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const [photoSides, setPhotoSides] = React.useState<Record<string, Side | null>>(agentSides)
   const card = useCard(family)
   const def = card.data?.definition
   React.useEffect(() => {
@@ -54,13 +65,22 @@ export function ReviewPanel({ run, onDone, compact }: { run: RunDetail; onDone?:
     setNote("")
     setEnroll(false)
     setFields({})
-  }, [run.run_id, run.family, run.variant])
+    setPhotoSides(agentSides)
+  }, [run.run_id, run.family, run.variant, agentSides])
 
   const extracted = run.result?.fields ?? {}
   const identified = !!(family && variant)
 
+  const multiPhoto = runPhotos.length > 1 || runPhotos.some((p) => !p.side)
+  const enrollPlan = runPhotos.length
+    ? runPhotos.filter((p) => photoSides[String(p.photo)]).map((p) => ({ photo: p.photo, side: photoSides[String(p.photo)] as Side }))
+    : [{ photo: 0, side: "front" as Side }]
+  const cardSides = def?.sides?.map((x) => x.id) ?? ["front"]
+  const sideProblem = enroll && enrollPlan.some((p) => !cardSides.includes(p.side)) ? `${family} has no ${enrollPlan.find((p) => !cardSides.includes(p.side))?.side} side` : enroll && runPhotos.length > 0 && !enrollPlan.length ? "Choose the side of at least one photo" : null
+
   const submit = async (decision: "accept" | "reject") => {
     if (decision === "accept" && !identified) return toast.error("Choose the correct programme and variant before accepting")
+    if (decision === "accept" && sideProblem) return toast.error(sideProblem)
     const changed = Object.fromEntries(Object.entries(fields).filter(([k, v]) => v.trim() && v.trim() !== (extracted[k]?.value ?? "")))
     try {
       await m.mutateAsync({
@@ -73,9 +93,16 @@ export function ReviewPanel({ run, onDone, compact }: { run: RunDetail; onDone?:
           note: note.trim() || undefined,
           reviewer: prefs.reviewer.trim() || undefined,
           enroll: decision === "accept" && enroll,
+          // send sides only when they differ from the agent's (or the agent could not tell)
+          photo_sides:
+            decision === "accept" && enroll && Object.entries(photoSides).some(([k, v]) => v && v !== agentSides[k])
+              ? (Object.fromEntries(Object.entries(photoSides).filter(([, v]) => v)) as Record<string, Side>)
+              : undefined,
         },
       })
-      toast.success(decision === "accept" ? "Accepted" : "Rejected", { description: enroll && decision === "accept" ? `Photo enrolled as a ${family}/${variant} reference` : undefined })
+      toast.success(decision === "accept" ? "Accepted" : "Rejected", {
+        description: enroll && decision === "accept" ? `${enrollPlan.length > 1 ? `${enrollPlan.length} photos` : "Photo"} enrolled as ${family}/${variant} reference${enrollPlan.length > 1 ? "s" : ""} (${enrollPlan.map((p) => p.side).join(" + ")})` : undefined,
+      })
       onDone?.()
     } catch (e) {
       toast.error("Review not saved", { description: (e as ApiError).message })
@@ -142,9 +169,34 @@ export function ReviewPanel({ run, onDone, compact }: { run: RunDetail; onDone?:
         <Checkbox id={`enroll-${run.run_id}`} checked={enroll} onCheckedChange={(v) => setEnroll(!!v)} disabled={!run.has_image} />
         <Label htmlFor={`enroll-${run.run_id}`} className="text-sm leading-snug font-normal">
           <span className="flex items-center gap-1.5 font-medium"><ImagePlus className="size-4" /> Enroll this photo as a reference</span>
-          <span className="text-muted-foreground block text-xs">{run.has_image ? "Accept only. Teaches the agent this design so it is recognised next time." : "No photo was stored for this run."}</span>
+          <span className="text-muted-foreground block text-xs">{run.has_image ? `Accept only. Teaches the agent this design so it is recognised next time${multiPhoto ? " — every photo as the side it shows" : ""}.` : "No photo was stored for this run."}</span>
         </Label>
       </div>
+      {enroll && multiPhoto && (
+        <div className="space-y-2 rounded-lg border p-3">
+          <div className="text-xs font-medium">Enrol as</div>
+          {runPhotos.map((p) => (
+            <div key={p.photo} className="flex items-center gap-2">
+              <AuthImage path={api.runImagePath(run.run_id, { photo: p.photo })} alt="" className="h-9 w-14 rounded border object-cover" />
+              <span className="text-xs">Photo {p.photo + 1}</span>
+              {p.side && <span className="text-muted-foreground text-[11px]">agent: {p.side}</span>}
+              <Select value={photoSides[String(p.photo)] ?? "skip"} onValueChange={(v) => setPhotoSides((x) => ({ ...x, [String(p.photo)]: v === "skip" ? null : (v as Side) }))}>
+                <SelectTrigger size="sm" className="ml-auto w-[120px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="front">Front</SelectItem>
+                  <SelectItem value="back">Back</SelectItem>
+                  <SelectItem value="skip">Do not enrol</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ))}
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            Will add: {enrollPlan.length ? enrollPlan.map((p) => <SideBadge key={p.photo} side={p.side} />) : <span className="text-muted-foreground">nothing</span>}
+            {family && variant && <span className="text-muted-foreground">to {family}/{variant}</span>}
+          </div>
+          {sideProblem && <p className="text-reject text-xs">{sideProblem}</p>}
+        </div>
+      )}
 
       {run.review_status !== "pending" && run.review_status !== "none" && (
         <Alert>

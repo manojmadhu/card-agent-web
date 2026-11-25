@@ -29,6 +29,7 @@ const HELP: Record<string, string> = {
   "scoring.reject_below": "Programme score below this = REJECT as unknown; between this and τ = REVIEW.",
   "scoring.geometry_required_without_text": "When no issuer text is read, accept only on a design match at least this strong.",
   "scoring.field_min_confidence": "Field OCR confidence below this sends the card to review (LOW_CONFIDENCE).",
+  "scoring.sides_mismatch_geometry": "Two photos: when they match different programmes with at least this geometry score, the card goes to review (SIDES_MISMATCH). 0–1.",
   "quality.min_side": "Minimum short side of the photo in pixels.",
   "quality.min_blur": "Minimum sharpness (variance of the Laplacian).",
   "quality.max_glare": "Maximum share of blown-out pixels.",

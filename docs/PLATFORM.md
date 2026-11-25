@@ -1,6 +1,6 @@
 # Card Agent Console — platform and process documentation
 
-Version 2.0.0 · branch `feature/enterprise-console` · targets card-agent-enterprise `feature/qdrant-platform` (API v1, result schema 2.0, commit `31daeb0`).
+Version 2.1.0 · branch `feature/two-sided-console` · targets card-agent-enterprise `feature/two-sided-cards` (API v1, result schema 2.1, commit `df010d4`). It stays compatible with `feature/qdrant-platform` (schema 2.0, commit `31daeb0`).
 
 1. [Purpose and scope](#1-purpose-and-scope)
 2. [How the console was built](#2-how-the-console-was-built)
@@ -12,6 +12,7 @@ Version 2.0.0 · branch `feature/enterprise-console` · targets card-agent-enter
 8. [Verification](#8-verification)
 9. [Deployment and configuration](#9-deployment-and-configuration)
 10. [Known limitations and next steps](#10-known-limitations-and-next-steps)
+11. [Two-sided cards (schema 2.1)](#11-two-sided-cards-schema-21)
 
 ---
 
@@ -75,15 +76,15 @@ Every endpoint in `docs/API.md`, and where it lives in the console.
 
 | Endpoint | Access | Screen → action |
 |---|---|---|
-| `POST /v1/cards/validate` | open | Validate › Batch; Run detail › Re-validate now (`store=false`) |
-| `POST /v1/cards/validate/stream` | open | Validate › Live, step by step (`mode=delta`, `store` toggle, request id) |
+| `POST /v1/cards/validate` (`image` · `front`/`back` · `images`) | open | Validate › Batch (front/back pairing); Run detail › Re-validate now (`store=false`, same photo roles) |
+| `POST /v1/cards/validate/stream` (same photo fields) | open | Validate › Live, step by step (`mode=delta`, `store` toggle, request id; One photo / Front and back / Sides unknown) |
 | `GET /v1/pipeline/steps` | open | Health & metrics › Pipeline |
 | `GET /v1/cards` | open | Card programmes; command palette; filters everywhere |
 | `GET /v1/cards/{id}` (+ `?format=yaml`) | open | Programme › Overview / Definition (YAML) |
 | `PUT /v1/cards/{id}` (JSON or YAML, `?force`) | admin | Programme › Save; Add programme wizard; Import YAML; 409 → force confirmation |
 | `DELETE /v1/cards/{id}` (`?force`) | admin | Programme › Delete (type the id to confirm) |
-| `GET /v1/cards/{id}/references` | admin | Programme › Reference images; Field layout background |
-| `POST /v1/cards/{id}/variants/{v}/references` (`detect_card`) | admin | Reference images › Upload (per-file created / exists / rejected) |
+| `GET /v1/cards/{id}/references` | admin | Programme › Reference images (grouped by side); Field layout background per side |
+| `POST /v1/cards/{id}/variants/{v}/references` (`detect_card`, `side`) | admin | Reference images › Upload front / Upload back (per-file created / exists / rejected); wizard last step |
 | `GET /v1/cards/{id}/references/{ref}/image` | admin | Reference thumbnails; stream search step; layout editor |
 | `DELETE /v1/cards/{id}/references/{ref}` (`?force`) | admin | Reference viewer › Delete |
 | `GET /v1/registry` | open | Registry & sync; sidebar footer |
@@ -91,9 +92,9 @@ Every endpoint in `docs/API.md`, and where it lives in the console.
 | `POST /v1/registry/reload` | admin | Registry & sync › Reload now |
 | `GET /v1/runs` (filters, `before` cursor) | admin | Run history (filters live in the URL, so a view can be shared) |
 | `GET /v1/runs/{id}` | admin | Run detail; Review queue detail |
-| `GET /v1/runs/{id}/image` | admin | Run detail photo; queue thumbnails; re-validate |
+| `GET /v1/runs/{id}/image` (`side`, `photo`) | admin | Run detail photos; queue thumbnails; per-photo panel; re-validate |
 | `DELETE /v1/runs/{id}` | admin | Run detail › Delete |
-| `POST /v1/runs/{id}/review` | admin | Review queue / Run detail › Accept / Reject (+ corrections, enrol) |
+| `POST /v1/runs/{id}/review` (`photo_sides`) | admin | Review queue / Run detail › Accept / Reject (+ corrections, enrol with a side per photo) |
 | `GET /v1/review` | admin | Review queue; sidebar badge |
 | `POST /v1/runs/prune` | admin | Run history › Prune old runs |
 | `GET /v1/stats` | admin | Overview (range, custom dates, programme filter) |
@@ -117,6 +118,7 @@ Error semantics, applied the same way everywhere:
 | `404` | "Not found" state with a way back. |
 | `409` | Ownership conflict on a Git-owned programme. A confirmation explains the hand-over to API ownership, then retries with `force=true`. |
 | `413` / `415` | Checked in the browser before upload (8 MB, JPEG/PNG/WebP). The server's message is shown if it still rejects. |
+| `422` on a photo field (2.0 server) | A 2.0 server does not know `front`/`back`/`images`. The validate screen explains that the server predates two-sided cards and suggests **One photo**. |
 | `422` | Pydantic details are shown per field. In the YAML editor they are mapped to line numbers. |
 | `503` | Automatic retry honouring `Retry-After`, plus a top banner while the API is unavailable. |
 
@@ -186,7 +188,7 @@ Error semantics, applied the same way everywhere:
 
 ## 8. Verification
 
-All checks ran in the build environment on 2026-11-24/25 against a real card-agent-enterprise server (`feature/qdrant-platform`, embedded Qdrant, classic matcher, Tesseract 5.3.4).
+The 2.0.0 checks ran on 2026-11-24/25 against a real card-agent-enterprise server (`feature/qdrant-platform`, embedded Qdrant, classic matcher, Tesseract 5.3.4). The 2.1.0 checks ran on 2026-11-26 against two real servers side by side: `feature/two-sided-cards` (`df010d4`) and `feature/qdrant-platform` (`31daeb0`).
 
 | Check | Result |
 |---|---|
@@ -198,6 +200,17 @@ All checks ran in the build environment on 2026-11-24/25 against a real card-age
 | E2E on the **production build behind the production nginx config** | 23 / 23 passed, 0 browser errors (after fixing the CSP defect found by this run) |
 | SSE through nginx | Events arrive incrementally over the run (+0.00 s … +1.40 s), not buffered |
 | Security headers | CSP, X-Frame-Options, nosniff and Referrer-Policy present on HTML, and assets cached for 1 year |
+
+2.1.0 (two-sided cards):
+
+| Check | Result |
+|---|---|
+| Backend test suite, `feature/two-sided-cards` | 74 / 74 passed |
+| `tsc -b` / `oxlint` | 0 errors |
+| `vitest` | 28 / 28 passed (adds front/back pairing and sides schema tests) |
+| **Existing** 23-step e2e, unchanged, against the 2.1 server | 23 / 23 passed (dev server and production build behind nginx) |
+| **Existing** 23-step e2e, unchanged, against the 2.0 server | 23 / 23 passed — the upgrade does not break current deployments |
+| New 16-step two-sided e2e (`e2e/two-sided.e2e.mjs`) | 16 / 16 passed on the dev server and on the production build behind nginx (strict CSP); re-runnable, it cleans up the references it enrols |
 
 The 23 E2E steps (`e2e/console.e2e.mjs`):
 1. Operator view is locked.
@@ -224,6 +237,24 @@ The 23 E2E steps (`e2e/console.e2e.mjs`):
 22. Command palette.
 23. Sign-out locks admin screens again.
 
+The 16 two-sided steps (`e2e/two-sided.e2e.mjs`):
+1. Sign in.
+2. One photo is still the default (sends `image`, as before).
+3. Front and back → ACCEPT, with both straightened photos and fields by side.
+4. Per-photo rows in the Quality stage and the side-assignment table in Fields.
+5. Swapped front/back is detected and shown as "side corrected".
+6. Front only → REJECT `SIDE_REQUIRED:back`, fields marked "not photographed", **Add a photo of the back** → ACCEPT.
+7. Sides unknown (`images`) → ACCEPT.
+8. One photo of a back-only programme → ACCEPT.
+9. Batch pairs `*_front`/`*_back` files into one card.
+10. Programme list and overview show sides and per-side reference counts.
+11. Field layout per side (back shows only back fields).
+12. Upload a reference to the back of a variant and delete it.
+13. Run detail shows both photos; review enrols both with a side each.
+14. Wizard creates a two-sided programme with a field on the back (YAML has `sides` and `side: back`), then deletes it.
+15. Evaluation report lists both files of two-photo cases.
+16. Decision settings expose `scoring.sides_mismatch_geometry`.
+
 ## 9. Deployment and configuration
 
 | Setting | Where | Default |
@@ -245,4 +276,31 @@ The container is `nginx-unprivileged` on port 8080 with health check `/console-h
 - **Statistics window.** `/v1/stats` caps at `runs.stats_max_runs`. The overview warns when its numbers are truncated.
 - **Matcher and models are not editable at runtime.** By design these settings are fixed; the console shows them read-only.
 - **Not verified in this environment:** the DINOv2/GPU path, PaddleOCR and the VLM fallback (all server-side), and a real container build (no Docker daemon was available; the nginx template itself was verified with nginx 1.24).
+- **Two-sided cards on the DINOv2/GPU matcher** were not exercised here (classic matcher only), and the side detection quality must be measured on real, consented two-sided cards with an evaluation set that uses `files`.
 - **Demo data is synthetic.** Layouts, colours and formats must be calibrated on real, consented cards before ACCEPTs are trusted (backend OPERATIONS §5).
+
+## 11. Two-sided cards (schema 2.1)
+
+### 11.1 What changed in the backend
+`feature/two-sided-cards` lets a programme declare `sides: [{id: front}, {id: back, required: …}]` and put each field on a side. A validation can carry up to two photos. The pipeline runs ingest, quality, normalise, OCR and embedding **per photo**, merges the evidence into one decision and reports `photos[]` (side, how the side was decided, quality, fields read, matched reference) and `missing_sides`. New reason codes: `SIDE_REQUIRED:<side>` (a required side was not photographed) and `SIDES_MISMATCH` (the two photos do not belong to the same card); a rule can be skipped with `SIDE_NOT_CAPTURED:<side>`. References, run images, reviews and evaluation manifests gained a side as well.
+
+### 11.2 How the console follows it
+
+| Area | Change | Compatibility |
+|---|---|---|
+| Types (`src/api/types.ts`) | `Side`, `PhotoInfo`, `photos`, `missing_sides`, `fields[].side`, card `sides`, `reference_images_by_side`, `missing_references`, run `images`, review `photo_sides` / `enrolled_photos`, evaluation `files` | Every new property is optional; a 2.0 response is still valid |
+| Requests (`endpoints.ts`) | `validatePhotos({image} \| {front, back} \| {images})`; `uploadReferences(…, side)`; `runImagePath(id, {side, photo})` | `validate(image)` still sends only `image`; `side` is only sent when chosen |
+| Validate | Three modes; the default **One photo** is the old behaviour. Missing-side callout with a one-click fix. Straightened photos per photo with that side's regions | 2.0 servers: a clear message if a two-photo mode is used |
+| Timeline (`pipeline.tsx`) | Per-photo sub-sections for per-photo stages; fields table gets a Side column and a side-assignment table; `SIDES_MISMATCH` note on the search step | Single-photo detail is rendered exactly as before |
+| Result | Side badge per field, "not photographed" for fields whose side is missing, Photos panel | Shown only when the card is two-sided or several photos were sent |
+| Programmes | Sides section in the form editor, side per field, per-side layout editor, references grouped by side, `missing_references` warning, wizard **Sides** step | A one-sided programme has no `sides` in its YAML, and it stays that way unless an operator adds a back |
+| Review | Both photos shown; enrol each photo as Front / Back / not at all; `photo_sides` is sent only when the reviewer changed the agent's sides | Single-photo review unchanged |
+| Batch | `pairFiles`: `x_front`+`x_back` (or `-f`/`-b`) → one card; `x_1`+`x_2` → `images`; everything else → one photo | Turn **Pair front/back** off to send every file alone |
+
+### 11.3 Procedures
+- **Turn a programme into a two-sided one.** Programme › Form editor › Sides › *Front and back*. Choose whether the back is *Automatic*, *Required* or *Optional*, move fields that are printed on the back with their Side selector, draw their regions on the back in Field layout, then upload 3–20 back references per variant. Until every variant has back references, the overview shows a `missing_references` warning. Run an evaluation that includes front+back cases before relying on it.
+- **Validate a card that has data on both sides.** Validate › *Front and back*, add both photos and validate. If only one side was photographed and the other is required, the result is REJECT `SIDE_REQUIRED:<side>`; click **Add a photo of the <side>**. When you do not know which photo is which, use *Sides unknown*: the agent decides and reports how.
+- **Review a two-photo run.** Check both photos. When enrolling, confirm the side of each photo (the agent's choice is pre-selected); set *Do not enrol* for a blurred one.
+- **Evaluate.** In `manifest.json`, a case may use `"files": {"front": "a.jpg", "back": "b.jpg"}` or `"files": ["a.jpg", "b.jpg"]` instead of `"file"`. The report lists both files.
+- **Tune.** `scoring.sides_mismatch_geometry` sets how weak the geometric agreement between the two photos may get before the agent reports `SIDES_MISMATCH`. Use what-if evaluation before applying, as for any threshold (5.3).
+

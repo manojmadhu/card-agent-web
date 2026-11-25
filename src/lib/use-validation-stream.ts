@@ -1,8 +1,8 @@
 // Drives POST /v1/cards/validate/stream and exposes the live StepState list to React.
 import * as React from "react"
-import { api } from "@/api/endpoints"
+import { api, type CardPhotos } from "@/api/endpoints"
 import { ApiError } from "@/api/client"
-import type { StepState, StreamSnapshot, ValidationResult } from "@/api/types"
+import type { StepState, StreamPhoto, StreamSnapshot, ValidationResult } from "@/api/types"
 
 export const STEP_IDS = ["ingest", "quality", "normalise", "ocr", "embed", "search", "family", "variant", "fields", "rules", "decision"] as const
 
@@ -11,6 +11,8 @@ export const pendingSteps = (): StepState[] => STEP_IDS.map((id) => ({ id, statu
 export interface StreamState {
   steps: StepState[]
   normalisedUrl?: string
+  /** 2.1: one entry per photo with its straightened image; a single-photo 2.0 stream leaves this empty. */
+  photos: StreamPhoto[]
   result?: ValidationResult
   error?: string
   running: boolean
@@ -19,25 +21,33 @@ export interface StreamState {
 }
 
 export function useValidationStream() {
-  const [state, setState] = React.useState<StreamState>({ steps: pendingSteps(), running: false })
+  const [state, setState] = React.useState<StreamState>({ steps: pendingSteps(), photos: [], running: false })
   const ctl = React.useRef<AbortController | null>(null)
 
-  const start = React.useCallback(async (file: Blob, filename: string, opts: { requestId?: string; store?: boolean }) => {
+  const start = React.useCallback(async (photos: CardPhotos, opts: { requestId?: string; store?: boolean }) => {
     ctl.current?.abort()
     const ac = new AbortController()
     ctl.current = ac
     const t0 = performance.now()
-    setState({ steps: pendingSteps(), running: true, startedAt: Date.now() })
+    setState({ steps: pendingSteps(), photos: [], running: true, startedAt: Date.now() })
+    // merge photo info from snapshots without losing images that arrived in photo_image events
+    const mergePhotos = (old: StreamPhoto[], incoming?: StreamPhoto[]) =>
+      incoming ? incoming.map((p) => ({ ...p, normalisedUrl: p.normalisedUrl ?? old.find((o) => o.photo === p.photo)?.normalisedUrl ?? null })) : old
     try {
       await api.validateStream(
-        file,
-        filename,
-        (event, data) => {
+        photos,
+        (event: string, data: unknown) => {
           setState((s) => {
             switch (event) {
               case "snapshot": {
                 const d = data as StreamSnapshot
-                return { ...s, steps: d.steps, normalisedUrl: d.normalisedUrl ?? s.normalisedUrl }
+                return { ...s, steps: d.steps, normalisedUrl: d.normalisedUrl ?? s.normalisedUrl, photos: mergePhotos(s.photos, d.photos) }
+              }
+              case "photo_image": {
+                const d = data as { photo: number; label: string; normalisedUrl: string }
+                const rest = s.photos.filter((p) => p.photo !== d.photo)
+                const prev = s.photos.find((p) => p.photo === d.photo)
+                return { ...s, photos: [...rest, { photo: d.photo, label: d.label, side: prev?.side ?? null, normalisedUrl: d.normalisedUrl }].sort((a, b) => a.photo - b.photo) }
               }
               case "step": {
                 const st = data as StepState
@@ -47,7 +57,7 @@ export function useValidationStream() {
                 return { ...s, normalisedUrl: (data as { normalisedUrl: string }).normalisedUrl }
               case "result": {
                 const d = data as StreamSnapshot
-                return { ...s, steps: d.steps, normalisedUrl: d.normalisedUrl ?? s.normalisedUrl, result: d.result, running: false, elapsedMs: performance.now() - t0 }
+                return { ...s, steps: d.steps, normalisedUrl: d.normalisedUrl ?? s.normalisedUrl, photos: mergePhotos(s.photos, d.photos), result: d.result, running: false, elapsedMs: performance.now() - t0 }
               }
               case "error":
                 return { ...s, error: (data as { detail: string }).detail, running: false }
@@ -71,7 +81,7 @@ export function useValidationStream() {
   const cancel = () => ctl.current?.abort()
   const reset = () => {
     ctl.current?.abort()
-    setState({ steps: pendingSteps(), running: false })
+    setState({ steps: pendingSteps(), photos: [], running: false })
   }
   React.useEffect(() => () => ctl.current?.abort(), [])
   return { ...state, start, cancel, reset }

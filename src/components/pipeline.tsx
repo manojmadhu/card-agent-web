@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AuthImage, DecisionBadge, ScoreBar, StepIcon } from "@/components/common"
 import { useConnection } from "@/auth/connection"
+import { SideBadge } from "@/components/photos"
 
 export const STEP_META: Record<string, { title: string; short: string; stage: string; explain: string }> = {
   ingest: { title: "Ingest", short: "Ingest", stage: "0", explain: "Photo received and decoded." },
@@ -138,7 +139,31 @@ export function StepTimeline({ steps, selected, setSelected }: { steps: StepStat
 const Mono = ({ children, className }: { children: React.ReactNode; className?: string }) => <span className={cn("font-mono text-xs", className)}>{children}</span>
 const n2 = (v: unknown) => (typeof v === "number" ? v.toFixed(2) : "—")
 
+/** Steps run once per photo (2.1) carry detail.photos = [{photo, label, status, summary, detail}]. */
+const PER_PHOTO = ["ingest", "quality", "normalise", "ocr", "embed"]
+
 export function StepDetail({ step }: { step: StepState }) {
+  const per = step.detail?.photos as { photo: number; label: string; status: StepState["status"]; summary: string; detail: unknown }[] | undefined
+  if (PER_PHOTO.includes(step.id) && per && per.length > 1 && per[0]?.label !== undefined) {
+    return (
+      <div className="space-y-3">
+        {per.map((p) => (
+          <div key={p.photo} className="rounded-md border">
+            <div className="bg-muted/40 flex items-center gap-2 border-b px-3 py-1.5 text-xs">
+              <StepIcon status={p.status} className="size-3.5" />
+              <span className="font-medium capitalize">{p.label}</span>
+              <span className="text-muted-foreground truncate">{p.summary}</span>
+            </div>
+            <div className="p-3">{p.detail ? <SingleStepDetail step={{ ...step, status: p.status, detail: p.detail }} /> : <span className="text-muted-foreground text-xs">no detail</span>}</div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  return <SingleStepDetail step={step} />
+}
+
+function SingleStepDetail({ step }: { step: StepState }) {
   const d = step.detail
   const { isAdmin } = useConnection()
   switch (step.id) {
@@ -222,6 +247,7 @@ export function StepDetail({ step }: { step: StepState }) {
             Stage 1 shortlisted the nearest of <b className="text-foreground">{d.total}</b> reference images (cosine floor <Mono>{d.floor}</Mono>).
             {d.candidate_families?.length ? <> Families in play: {d.candidate_families.map((f: string) => <Mono key={f} className="text-foreground mr-1">{f}</Mono>)}</> : null}
             {d.matched === false && <span className="text-reject font-medium"> No reference is similar enough — not matching.</span>}
+            {d.sides_mismatch && <span className="text-review font-medium"> The two photos match different programmes (SIDES_MISMATCH).</span>}
           </p>
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-1.5">
@@ -348,6 +374,7 @@ export function StepDetail({ step }: { step: StepState }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Field</TableHead>
+                {d.fields?.some((f: any) => f.side) && <TableHead>Side</TableHead>}
                 <TableHead>Value</TableHead>
                 <TableHead>Source</TableHead>
                 <TableHead className="text-right">Conf.</TableHead>
@@ -358,7 +385,8 @@ export function StepDetail({ step }: { step: StepState }) {
               {d.fields?.map((f: any) => (
                 <TableRow key={f.name}>
                   <TableCell className="text-xs">{f.name}{f.required && <span className="text-reject">*</span>}</TableCell>
-                  <TableCell>{f.value ? <Mono>{f.value}{f.iso && <span className="text-muted-foreground"> → valid until {f.iso}</span>}</Mono> : <span className="text-reject text-xs">not read</span>}</TableCell>
+                  {d.fields?.some((x: any) => x.side) && <TableCell><SideBadge side={f.side} /></TableCell>}
+                  <TableCell>{f.value ? <Mono>{f.value}{f.iso && <span className="text-muted-foreground"> → valid until {f.iso}</span>}</Mono> : (d.missing_sides ?? []).includes(f.side) ? <span className="text-muted-foreground text-xs">not photographed</span> : <span className="text-reject text-xs">not read</span>}</TableCell>
                   <TableCell className="text-muted-foreground text-xs">{f.source}</TableCell>
                   <TableCell className="tabular text-right text-xs">{f.confidence ? n2(f.confidence) : "—"}</TableCell>
                   <TableCell className="text-right">{f.ok ? <StepIcon status="pass" className="ml-auto size-3.5" /> : <StepIcon status="fail" className="ml-auto size-3.5" />}</TableCell>
@@ -367,6 +395,37 @@ export function StepDetail({ step }: { step: StepState }) {
             </TableBody>
           </Table>
           <p className="text-muted-foreground text-xs">Aligned to reference: {d.aligned_to_reference ? "yes" : "no"} · VLM fallback {d.vlm}</p>
+          {d.missing_sides?.length > 0 && <p className="text-reject text-xs font-medium">Missing side: {d.missing_sides.join(", ")} — its fields were not read (SIDE_REQUIRED).</p>}
+          {d.side_assignment?.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-xs font-medium">Side assignment (how strongly each photo matches each side's references)</div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="h-7">Photo</TableHead>
+                    <TableHead className="h-7 text-right">Front affinity</TableHead>
+                    <TableHead className="h-7 text-right">Back affinity</TableHead>
+                    <TableHead className="h-7">Used as</TableHead>
+                    <TableHead className="h-7">Fields read</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {d.side_assignment.map((a: any) => {
+                    const used = d.photos?.find((p: any) => p.photo === a.photo)
+                    return (
+                      <TableRow key={a.photo}>
+                        <TableCell className="py-1 text-xs">{a.photo + 1}</TableCell>
+                        <TableCell className="tabular py-1 text-right text-xs">{n2(a.affinity?.front)}</TableCell>
+                        <TableCell className="tabular py-1 text-right text-xs">{n2(a.affinity?.back)}</TableCell>
+                        <TableCell className="py-1"><SideBadge side={used?.side} /></TableCell>
+                        <TableCell className="py-1 text-xs">{used?.fields?.join(", ") || "—"}</TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </div>
       )
     case "rules":

@@ -89,7 +89,18 @@ export default function RegistryPage() {
                     <TableCell><Link to={`/cards/${f.family}`} className="font-medium hover:underline">{f.name}</Link> <span className="text-muted-foreground font-mono text-xs">{f.family}</span></TableCell>
                     <TableCell className="font-mono text-xs">{f.country}</TableCell>
                     <TableCell>
-                      <div className="flex flex-wrap gap-1">{f.variants.map((v) => <Badge key={v.id} variant="outline" className={v.reference_images ? "" : "border-review/60 bg-review/10"}>{v.id} · {v.reference_images}</Badge>)}</div>
+                      <div className="flex flex-wrap gap-1">
+                        {(f.sides?.length ?? 1) > 1 && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">front + back</Badge>}
+                        {f.variants.map((v) => {
+                          const two = (f.sides?.length ?? 1) > 1
+                          const gap = two ? f.sides!.some((sd) => !(v.reference_images_by_side?.[sd] ?? 0)) : !v.reference_images
+                          return (
+                            <Badge key={v.id} variant="outline" className={gap ? "border-review/60 bg-review/10" : ""}>
+                              {v.id} · {two ? f.sides!.map((sd) => `${sd[0].toUpperCase()} ${v.reference_images_by_side?.[sd] ?? 0}`).join(" / ") : v.reference_images}
+                            </Badge>
+                          )
+                        })}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -37,6 +37,12 @@ export const fieldSchema = z.object({
   normalise: z.enum(NORMALISE).default("none"),
   anchor: z.string().nullable().optional(),
   script: z.enum(["latin", "arabic"]).default("latin"),
+  side: z.enum(["front", "back"]).optional(), // 2.1: default front
+})
+
+export const sideSchema = z.object({
+  id: z.enum(["front", "back"]),
+  required: z.boolean().nullable().optional(),
 })
 
 export const ruleSchema = z.object({
@@ -58,6 +64,7 @@ export const cardSchema = z
     fields: z.array(fieldSchema),
     rules: z.array(ruleSchema).default([]),
     schema_version: z.number().int().default(1),
+    sides: z.array(sideSchema).optional(), // 2.1: default [{id: front}]
   })
   .superRefine((f, ctx) => {
     const ids = new Set<string>()
@@ -77,6 +84,22 @@ export const cardSchema = z
       if (!names.has(r.field)) ctx.addIssue({ code: "custom", path: ["rules", i, "field"], message: `rule ${r.type} refers to unknown field "${r.field}"` })
       if (r.type === "date_order" && !names.has(String(r.params?.other_field ?? "")))
         ctx.addIssue({ code: "custom", path: ["rules", i, "params"], message: "date_order needs params.other_field naming a field" })
+    })
+    // two-sided cards (schema 2.1) — same checks as registry/models.py
+    const sides = f.sides?.length ? f.sides : [{ id: "front" as const, required: null }]
+    const seen = new Set<string>()
+    sides.forEach((sd, i) => {
+      if (seen.has(sd.id)) ctx.addIssue({ code: "custom", path: ["sides", i, "id"], message: `side "${sd.id}" is listed twice` })
+      seen.add(sd.id)
+    })
+    f.fields.forEach((fd, i) => {
+      const side = fd.side ?? "front"
+      if (!seen.has(side)) ctx.addIssue({ code: "custom", path: ["fields", i, "side"], message: `field ${fd.name} is on side "${side}", which is not in sides` })
+    })
+    sides.forEach((sd, i) => {
+      const req = f.fields.filter((fd) => fd.required && (fd.side ?? "front") === sd.id)
+      if (sd.required === false && req.length)
+        ctx.addIssue({ code: "custom", path: ["sides", i, "required"], message: `side ${sd.id} carries required field(s) ${req.map((x) => x.name).join(", ")}, so it cannot be required: false` })
     })
     if (f.country && f.id && !f.id.startsWith(f.country.toLowerCase() + "."))
       ctx.addIssue({ code: "custom", path: ["id"], message: `by convention the id starts with the country code (${f.country.toLowerCase()}.)` })
@@ -150,7 +173,9 @@ export function cardToYaml(card: CardFamily, header?: string): string {
     keywords: card.keywords,
     negative_keywords: card.negative_keywords ?? [],
     variants: card.variants.map((v) => ({ ...v, number_prefix: v.number_prefix ?? undefined })),
-    fields: card.fields.map((f) => ({ ...f, anchor: f.anchor ?? undefined, script: f.script === "latin" ? undefined : f.script })),
+    // sides only when the card defines them (one-sided cards stay byte-compatible with 2.0 definitions)
+    sides: card.sides?.length ? card.sides.map((sd) => ({ id: sd.id, required: sd.required ?? undefined })) : undefined,
+    fields: card.fields.map((f) => ({ ...f, anchor: f.anchor ?? undefined, script: f.script === "latin" ? undefined : f.script, side: card.sides?.length ? f.side ?? "front" : f.side && f.side !== "front" ? f.side : undefined })),
     rules: card.rules.map((r) => ({ type: r.type, field: r.field, critical: r.critical || undefined, params: r.params && Object.keys(r.params).length ? r.params : undefined })),
   }
   const doc = new YAML.Document(clean)
@@ -161,6 +186,7 @@ export function cardToYaml(card: CardFamily, header?: string): string {
       if (k === "params" && YAML.isMap(pair.value)) pair.value.flow = true
       if (k === "rules" && YAML.isSeq(pair.value)) pair.value.items.forEach((it) => YAML.isMap(it) && (it.flow = true))
       if (k === "variants" && YAML.isSeq(pair.value)) pair.value.items.forEach((it) => YAML.isMap(it) && (it.flow = true))
+      if (k === "sides" && YAML.isSeq(pair.value)) pair.value.items.forEach((it) => YAML.isMap(it) && (it.flow = true))
     },
   })
   return (header ? header + "\n" : "") + doc.toString({ lineWidth: 0 })
@@ -187,3 +213,15 @@ export const emptyCard = (): CardFamily => ({
   ],
   schema_version: 1,
 })
+
+/** Effective sides of a definition: required = explicit flag, else carries a required field, else only side. */
+export function effectiveSides(card: Pick<CardFamily, "sides" | "fields">): { id: "front" | "back"; required: boolean; fields: string[] }[] {
+  const sides = card.sides?.length ? card.sides : [{ id: "front" as const, required: null }]
+  return sides.map((sd) => {
+    const fields = card.fields.filter((f) => (f.side ?? "front") === sd.id)
+    const required = sd.required ?? (fields.some((f) => f.required) || sides.length === 1)
+    return { id: sd.id, required, fields: fields.map((f) => f.name) }
+  })
+}
+
+export const isTwoSided = (card?: Pick<CardFamily, "sides"> | null) => (card?.sides?.length ?? 0) > 1

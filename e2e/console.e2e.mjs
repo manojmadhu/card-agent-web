@@ -188,7 +188,7 @@ await step("onboard a new programme with the wizard", async () => {
   await page.getByPlaceholder("Issuing organisation").fill("Gamma QA Issuer")
   await page.getByPlaceholder(/FAZAA/).fill("GAMMATEST")
   await page.keyboard.press("Enter")
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 5; i++) { // identity → variants → sides → fields → rules → review
     await page.getByRole("button", { name: /^Next/ }).click()
     await page.waitForTimeout(300)
   }

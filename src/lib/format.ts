@@ -48,13 +48,19 @@ const REASON_TEXT: Record<string, string> = {
   GLARE: "Glare on the card",
   LOW_RESOLUTION: "Resolution too low",
   NO_CARD_FOUND: "No card found in the photo",
+  SIDE_REQUIRED: "Photo of this side needed",
+  SIDES_MISMATCH: "The photos show different cards",
+  SIDE_NOT_CAPTURED: "Side not photographed",
 }
 
 export function reasonLabel(code: string) {
   const [head, ...rest] = code.split(":")
+  if (head === "SIDE_REQUIRED" || head === "SIDE_NOT_CAPTURED") return `Photo of the ${rest[0] ?? "other side"} needed`
   const base = REASON_TEXT[head] ?? head.replace(/_/g, " ").toLowerCase()
   return rest.length ? `${base} — ${rest.join(" · ")}` : base
 }
 
 export const rgbHex = (c?: number[] | null) => (c ? "#" + c.slice(0, 3).map((v) => Math.round(v).toString(16).padStart(2, "0")).join("") : "#000000")
 export const hexRgb = (h: string): [number, number, number] => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]
+
+export const sideLabel = (s?: string | null) => (s === "back" ? "Back" : s === "front" ? "Front" : "—")

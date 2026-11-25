@@ -2,6 +2,9 @@
 // Shapes are taken from the server's pydantic models and from recorded responses.
 
 export type Decision = "ACCEPT" | "REVIEW" | "REJECT"
+/** Card side (schema 2.1, two-sided cards). Absent everywhere on 2.0 servers = front only. */
+export type Side = "front" | "back"
+export const SIDES: Side[] = ["front", "back"]
 export type ReviewStatus = "none" | "pending" | "accepted" | "rejected"
 
 // ------------------------------------------------------------------ validation result (schema 2.0)
@@ -22,6 +25,7 @@ export interface FieldResult {
   source: "ocr_roi" | "ocr_fulltext" | "vlm" | "none"
   valid_format: boolean
   valid_until?: string | null
+  side?: Side // 2.1: side the field is printed on
 }
 
 export interface RuleResult {
@@ -36,6 +40,7 @@ export interface Candidate {
   id: string
   score: number
   signals: Record<string, number>
+  photo?: number // 2.1: photo that gave the best score (two-photo requests)
 }
 
 export interface QualityInfo {
@@ -52,6 +57,20 @@ export interface QualityInfo {
   aligned_to_reference?: boolean | null
 }
 
+/** 2.1: one entry per uploaded photo (also for one-photo requests). */
+export interface PhotoInfo {
+  photo: number // 0-based upload position (order: front, back, image, images)
+  upload: "image" | "front" | "back" | "images"
+  declared: Side | null
+  side: Side | null // side the photo was used as; null = not used
+  status: "used" | "not_used" | "retake" | "invalid"
+  side_corrected: boolean
+  quality: QualityInfo | null
+  reference_id: string | null
+  inliers: number | null
+  fields: string[]
+}
+
 export interface ValidationResult {
   schema_version: string
   request_id: string
@@ -66,6 +85,8 @@ export interface ValidationResult {
   model_versions: Record<string, string>
   timings_ms: Record<string, number>
   processing_ms: number
+  photos?: PhotoInfo[] // 2.1
+  missing_sides?: Side[] // 2.1: required sides without a usable photo
 }
 
 // ------------------------------------------------------------------ stream
@@ -87,10 +108,18 @@ export interface PipelineStep {
   stage: string
 }
 
+export interface StreamPhoto {
+  photo: number
+  label: string // declared side or "photo 1"; becomes the detected side once known
+  side: Side | null
+  normalisedUrl: string | null
+}
+
 export interface StreamSnapshot {
   steps: StepState[]
   normalisedUrl?: string
   result?: ValidationResult
+  photos?: StreamPhoto[] // 2.1
 }
 
 // ------------------------------------------------------------------ cards
@@ -113,6 +142,7 @@ export interface FieldSpec {
   normalise: NormaliseKind
   anchor?: string | null
   script: "latin" | "arabic"
+  side?: Side // 2.1: default front; the roi is on a reference image of this side
 }
 
 export interface RuleSpec {
@@ -133,12 +163,19 @@ export interface CardFamily {
   fields: FieldSpec[]
   rules: RuleSpec[]
   schema_version: number
+  sides?: SideDef[] // 2.1: default [{id: front}]
+}
+
+export interface SideDef {
+  id: Side
+  required?: boolean | null // default: required when a required field is on it, or it is the only side
 }
 
 export interface VariantRefCount {
   id: string
   name: string
   reference_images: number
+  reference_images_by_side?: Partial<Record<Side, number>> // 2.1
 }
 
 export interface CardListItem {
@@ -149,6 +186,7 @@ export interface CardListItem {
   source: "api" | "registry" | null
   updated_at: string | null
   variants: VariantRefCount[]
+  sides?: Side[] // 2.1
 }
 
 export interface CardList {
@@ -169,6 +207,8 @@ export interface CardView {
   definition: CardFamily
   variants: VariantRefCount[]
   variants_without_references: string[]
+  sides?: { id: Side; required: boolean; fields: string[] }[] // 2.1 (effective)
+  missing_references?: { variant: string; side: Side }[] // 2.1
 }
 
 export interface PutCardResult extends CardView {
@@ -185,10 +225,12 @@ export interface ReferenceInfo {
   sha256: string
   source: string
   added_at: string
+  side?: Side // 2.1 (absent = front)
 }
 
 export interface ReferenceList {
   family: string
+  sides?: Side[] // 2.1
   variants: { id: string; name: string; references: ReferenceInfo[] }[]
 }
 
@@ -196,8 +238,10 @@ export interface UploadRefResult {
   family: string
   variant: string
   created: number
-  results: { filename: string; status: "created" | "exists" | "rejected"; ref_id?: string; error?: string }[]
+  results: { filename: string; status: "created" | "exists" | "rejected"; ref_id?: string; error?: string; side?: Side }[]
   reference_images_in_variant: number
+  side?: Side // 2.1
+  reference_images_in_side?: number // 2.1
   registry_version: string
 }
 
@@ -207,7 +251,7 @@ export interface RegistrySummary {
   families: number
   variants: number
   reference_images: number
-  items: { family: string; country: string; name: string; variants: VariantRefCount[] }[]
+  items: { family: string; country: string; name: string; variants: VariantRefCount[]; sides?: Side[] }[]
 }
 
 /** POST /v1/registry/sync — counters from store/sync.py plus the totals below. */
@@ -239,6 +283,7 @@ export interface RunSummary {
   registry_version: string | null
   review_status: ReviewStatus
   has_image: boolean
+  photos?: number // 2.1: number of uploaded photos
 }
 
 export interface Review {
@@ -250,11 +295,20 @@ export interface Review {
   reviewer: string | null
   reviewed_at: number
   enrolled: { ref_id: string; status: string } | null
+  enrolled_photos?: { photo: number; side: Side; ref_id: string; status: string }[] // 2.1
+}
+
+export interface RunImage {
+  photo: number
+  side: Side | null
+  upload: string
+  path: string
 }
 
 export interface RunDetail extends RunSummary {
   result: ValidationResult
   review: Review | null
+  images?: RunImage[] // 2.1 (absent on runs stored before two-sided support: one photo)
 }
 
 export interface Page<T> {
@@ -274,6 +328,7 @@ export interface ReviewIn {
   note?: string | null
   reviewer?: string | null
   enroll?: boolean
+  photo_sides?: Record<string, Side> // 2.1: side of each photo by position, for enrolment
 }
 
 export interface Stats {
@@ -333,6 +388,7 @@ export interface EvaluationSummary {
 
 export interface EvaluationRow {
   file: string
+  files?: Partial<Record<Side, string>> | string[] // 2.1: two-photo cases
   expected: Decision
   got: Decision
   expected_family: string | null

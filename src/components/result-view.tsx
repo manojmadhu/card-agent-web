@@ -9,6 +9,7 @@ import { RulesList } from "@/components/pipeline"
 import { maskValue, ms, reasonLabel } from "@/lib/format"
 import { useConnection } from "@/auth/connection"
 import { cn } from "@/lib/utils"
+import { PhotosPanel, SideBadge } from "@/components/photos"
 
 export function ResultSummary({ r, runLink = true, runId }: { r: ValidationResult; runLink?: boolean; runId?: string }) {
   const { isAdmin } = useConnection()
@@ -24,6 +25,11 @@ export function ResultSummary({ r, runLink = true, runId }: { r: ValidationResul
           v={rid ? isAdmin && runLink ? <Link to={`/runs/${rid}`} className="font-mono text-xs hover:underline">{rid.slice(0, 12)}…</Link> : <span className="font-mono text-xs">{rid.slice(0, 12)}…</span> : <span className="text-muted-foreground">not recorded</span>}
         />
       </div>
+      {(r.missing_sides?.length ?? 0) > 0 && (
+        <div className="border-reject/40 bg-reject/5 rounded-lg border px-3 py-2 text-sm">
+          <b>Photo of the {r.missing_sides!.join(" and ")} needed.</b> This programme prints required data there. Ask for that side and send <b>both</b> photos again in one request.
+        </div>
+      )}
       {r.reasons.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {r.reasons.map((x) => (
@@ -41,6 +47,8 @@ export function ResultSummary({ r, runLink = true, runId }: { r: ValidationResul
 export function FieldsTable({ r }: { r: ValidationResult }) {
   const { prefs } = useConnection()
   const entries = Object.entries(r.fields ?? {})
+  const missing = new Set(r.missing_sides ?? [])
+  const twoSided = entries.some(([, f]) => f.side === "back")
   if (!entries.length) return <p className="text-muted-foreground text-sm">No fields extracted.</p>
   return (
     <Table>
@@ -56,9 +64,11 @@ export function FieldsTable({ r }: { r: ValidationResult }) {
       <TableBody>
         {entries.map(([k, f]) => (
           <TableRow key={k}>
-            <TableCell className="text-sm">{k}</TableCell>
+            <TableCell className="text-sm">
+              <span className="flex items-center gap-1.5">{k}{twoSided && <SideBadge side={f.side} />}</span>
+            </TableCell>
             <TableCell className="font-mono text-xs">
-              {f.value ? maskValue(k, f.value, prefs.maskPii) : <span className="text-reject">not read</span>}
+              {f.value ? maskValue(k, f.value, prefs.maskPii) : f.side && missing.has(f.side) ? <span className="text-muted-foreground font-sans">not photographed — {f.side} side missing</span> : <span className="text-reject">not read</span>}
               {f.valid_until && <span className="text-muted-foreground"> · valid until {f.valid_until}</span>}
             </TableCell>
             <TableCell className="text-muted-foreground text-xs">{f.source}</TableCell>
@@ -76,12 +86,23 @@ export function FieldsTable({ r }: { r: ValidationResult }) {
   )
 }
 
-export function ResultDetails({ r }: { r: ValidationResult }) {
+export function ResultDetails({ r, runId }: { r: ValidationResult; runId?: string }) {
   const timings = Object.entries(r.timings_ms ?? {})
   const total = timings.reduce((a, [, v]) => a + v, 0) || 1
   const fam = r.candidates?.family ?? []
+  const multi = (r.photos?.length ?? 0) > 1 || (r.missing_sides?.length ?? 0) > 0
   return (
     <div className="grid gap-4 lg:grid-cols-2">
+      {multi && (
+        <Card className="gap-3 lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-sm">Photos ({r.photos?.length ?? 0})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PhotosPanel r={r} runId={runId} />
+          </CardContent>
+        </Card>
+      )}
       <Card className="gap-3">
         <CardHeader>
           <CardTitle className="text-sm">Extracted fields</CardTitle>

@@ -11,6 +11,7 @@ import { AdminRequired, AuthImage, DecisionBadge, EmptyState, ErrorState, Loadin
 import { FieldsTable, ResultSummary } from "@/components/result-view"
 import { RulesList } from "@/components/pipeline"
 import { ReviewPanel } from "@/components/review-panel"
+import { SideBadge } from "@/components/photos"
 import { useCards, useReviewQueue, useRun } from "@/api/queries"
 import { api } from "@/api/endpoints"
 import { useConnection } from "@/auth/connection"
@@ -79,7 +80,7 @@ export default function ReviewPage() {
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium">{it.family ? `${it.family}${it.variant ? " / " + it.variant : ""}` : "Not identified"}</div>
                         <div className="text-muted-foreground truncate text-xs">{it.reasons[0] ? reasonLabel(it.reasons[0]) : "—"}</div>
-                        <div className="text-muted-foreground text-[11px]">{relTime(it.created_at)}</div>
+                        <div className="text-muted-foreground text-[11px]">{relTime(it.created_at)}{(it.photos ?? 1) > 1 ? ` · ${it.photos} photos` : ""}</div>
                       </div>
                     </button>
                   </li>
@@ -104,7 +105,18 @@ export default function ReviewPage() {
                     <CardDescription>{relTime(run.data.created_at)} · {ms(run.data.processing_ms)} · request <span className="font-mono">{run.data.request_id}</span></CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    {run.data.has_image && <AuthImage path={api.runImagePath(run.data.run_id)} alt="card photo" className="max-h-[360px] w-full rounded-lg border bg-black/5 object-contain" />}
+                    {run.data.has_image && (run.data.images?.length ?? 0) > 1 ? (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {run.data.images!.map((im) => (
+                          <div key={im.photo} className="space-y-1">
+                            <div className="flex items-center gap-1.5 text-xs">Photo {im.photo + 1} <SideBadge side={run.data!.result.photos?.find((p) => p.photo === im.photo)?.side ?? im.side} /></div>
+                            <AuthImage path={api.runImagePath(run.data!.run_id, { photo: im.photo })} alt={`photo ${im.photo + 1}`} className="max-h-[260px] w-full rounded-lg border bg-black/5 object-contain" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : run.data.has_image ? (
+                      <AuthImage path={api.runImagePath(run.data.run_id)} alt="card photo" className="max-h-[360px] w-full rounded-lg border bg-black/5 object-contain" />
+                    ) : null}
                     <ResultSummary r={run.data.result} runId={run.data.run_id} />
                     <Button asChild variant="ghost" size="sm"><Link to={`/runs/${run.data.run_id}`}><ExternalLink /> Full run details</Link></Button>
                   </CardContent>

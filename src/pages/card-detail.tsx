@@ -15,12 +15,15 @@ import { ReferenceManager } from "@/components/reference-manager"
 import { SourceBadge } from "@/pages/cards"
 import { useCard, useCardYaml, useInvalidateCards, useReferences } from "@/api/queries"
 import { api } from "@/api/endpoints"
-import type { CardFamily } from "@/api/types"
+import type { CardFamily, CardView } from "@/api/types"
 import { useConnection } from "@/auth/connection"
-import { cardToYaml, parseCardYaml } from "@/lib/card-schema"
+import { cardToYaml, effectiveSides, parseCardYaml } from "@/lib/card-schema"
 import { useSaveCard } from "@/lib/use-save-card"
 import { dateTime, rgbHex } from "@/lib/format"
 import { RULE_HELP } from "@/lib/card-schema"
+import type { Side } from "@/api/types"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { SideBadge } from "@/components/photos"
 
 export default function CardDetailPage() {
   const { id = "" } = useParams()
@@ -100,7 +103,16 @@ export default function CardDetailPage() {
           <AlertDescription>This programme is imported from <span className="font-mono">registry/cards</span> by sync. Prefer changing it in Git. Saving or deleting here requires <b>force</b>, after which the API owns it and syncs leave it alone.</AlertDescription>
         </Alert>
       )}
-      {c.variants_without_references.length > 0 && (
+      {(c.missing_references?.length ?? 0) > 0 && (
+        <Alert className="border-review/50 mb-4">
+          <AlertTriangle className="text-review" />
+          <AlertTitle>Missing reference images: {c.missing_references!.map((m) => `${m.variant} (${m.side})`).join(", ")}</AlertTitle>
+          <AlertDescription>
+            Upload 3–20 images per variant and side. <button className="underline" onClick={() => setTab("references")}>Upload references</button>
+          </AlertDescription>
+        </Alert>
+      )}
+      {!c.missing_references && c.variants_without_references.length > 0 && (
         <Alert className="border-review/50 mb-4">
           <AlertTriangle className="text-review" />
           <AlertTitle>Variants without reference images: {c.variants_without_references.join(", ")}</AlertTitle>
@@ -120,7 +132,7 @@ export default function CardDetailPage() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-4">
-          <Overview def={c.definition} counts={Object.fromEntries(c.variants.map((v) => [v.id, v.reference_images]))} />
+          <Overview def={c.definition} view={c} />
           {isAdmin && (
             <Card className="border-reject/30 mt-4">
               <CardHeader>
@@ -213,7 +225,11 @@ export default function CardDetailPage() {
   )
 }
 
-function Overview({ def, counts }: { def: CardFamily; counts: Record<string, number> }) {
+function Overview({ def, view }: { def: CardFamily; view: CardView }) {
+  const counts = Object.fromEntries(view.variants.map((v) => [v.id, v.reference_images]))
+  const bySide = Object.fromEntries(view.variants.map((v) => [v.id, v.reference_images_by_side]))
+  const sides = view.sides ?? effectiveSides(def)
+  const two = sides.length > 1
   return (
     <div className="grid gap-4 xl:grid-cols-2">
       <Card className="gap-3">
@@ -238,20 +254,41 @@ function Overview({ def, counts }: { def: CardFamily; counts: Record<string, num
         <CardHeader><CardTitle className="text-sm">Variants</CardTitle></CardHeader>
         <CardContent>
           <Table>
-            <TableHeader><TableRow><TableHead>Variant</TableHead><TableHead>Tier words</TableHead><TableHead>Prefix</TableHead><TableHead className="text-right">Refs</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>Variant</TableHead><TableHead>Tier words</TableHead><TableHead>Prefix</TableHead>{two ? sides.map((sd) => <TableHead key={sd.id} className="text-right">{sd.id === "back" ? "Back refs" : "Front refs"}</TableHead>) : <TableHead className="text-right">Refs</TableHead>}</TableRow></TableHeader>
             <TableBody>
               {def.variants.map((v) => (
                 <TableRow key={v.id}>
                   <TableCell><span className="mr-2 inline-block size-3 rounded-sm border align-middle" style={{ background: rgbHex(v.body_color_rgb) }} />{v.name} <span className="text-muted-foreground font-mono text-xs">{v.id}</span></TableCell>
                   <TableCell className="text-xs" dir="auto">{v.keywords.join(", ") || "—"}</TableCell>
                   <TableCell className="font-mono text-xs">{v.number_prefix ?? "—"}</TableCell>
-                  <TableCell className={counts[v.id] ? "tabular text-right" : "text-review tabular text-right font-medium"}>{counts[v.id] ?? 0}</TableCell>
+                  {two ? (
+                    sides.map((sd) => {
+                      const n = bySide[v.id]?.[sd.id] ?? (sd.id === "front" ? counts[v.id] : 0) ?? 0
+                      return <TableCell key={sd.id} className={n ? "tabular text-right" : "text-review tabular text-right font-medium"}>{n}</TableCell>
+                    })
+                  ) : (
+                    <TableCell className={counts[v.id] ? "tabular text-right" : "text-review tabular text-right font-medium"}>{counts[v.id] ?? 0}</TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
+      {two && (
+        <Card className="gap-3 xl:col-span-2">
+          <CardHeader><CardTitle className="text-sm">Sides</CardTitle></CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2">
+            {sides.map((sd) => (
+              <div key={sd.id} className="flex flex-wrap items-center gap-2 rounded-lg border p-3 text-sm">
+                <SideBadge side={sd.id} />
+                <Badge variant="outline" className={sd.required ? "border-reject/40" : ""}>{sd.required ? "photo required" : "photo optional"}</Badge>
+                <span className="text-muted-foreground text-xs">{sd.fields.length ? sd.fields.join(", ") : "identification only"}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
       <Card className="gap-3">
         <CardHeader><CardTitle className="text-sm">Fields</CardTitle></CardHeader>
         <CardContent>
@@ -260,7 +297,7 @@ function Overview({ def, counts }: { def: CardFamily; counts: Record<string, num
             <TableBody>
               {def.fields.map((f) => (
                 <TableRow key={f.name}>
-                  <TableCell className="text-sm">{f.name}{f.anchor && <span className="text-muted-foreground text-xs"> · “{f.anchor}”</span>}</TableCell>
+                  <TableCell className="text-sm"><span className="flex items-center gap-1.5">{f.name}{two && <SideBadge side={f.side ?? "front"} />}{f.anchor && <span className="text-muted-foreground text-xs">“{f.anchor}”</span>}</span></TableCell>
                   <TableCell className="max-w-56 truncate font-mono text-xs">{f.regex}</TableCell>
                   <TableCell className="text-xs">{f.normalise}{f.script === "arabic" && " · arabic"}</TableCell>
                   <TableCell className="text-xs">{f.required ? "yes" : "no"}</TableCell>
@@ -292,17 +329,26 @@ function LayoutTab({ id, def, onChange, readOnly }: { id: string; def: CardFamil
   const { isAdmin } = useConnection()
   const refs = useReferences(id, isAdmin)
   const [variant, setVariant] = React.useState(def.variants[0]?.id)
+  const sides: Side[] = def.sides?.length ? def.sides.map((x) => x.id) : ["front"]
+  const [side, setSide] = React.useState<Side>(sides[0])
   const v = refs.data?.variants.find((x) => x.id === variant)
-  const ref = v?.references[0]
+  // regions belong to one side and are drawn on a reference image of that side
+  const ref = v?.references.find((r) => (r.side ?? "front") === side)
+  const sideFields = def.fields.filter((f) => (f.side ?? "front") === side)
   const vd = def.variants.find((x) => x.id === variant)
-  const image = ref ? <AuthImage path={api.referenceImagePath(id, ref.ref_id)} alt="reference" /> : <div style={{ background: rgbHex(vd?.body_color_rgb) }} />
+  const image = ref ? <AuthImage path={api.referenceImagePath(id, ref.ref_id)} alt="reference" /> : <div style={{ background: side === "front" ? rgbHex(vd?.body_color_rgb) : "var(--muted)" }} />
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
       <Card>
         <CardHeader>
           <CardTitle>Field layout</CardTitle>
           <CardDescription>Field regions drawn on a real reference image. {readOnly ? "" : "Select a field and drag on the card to redraw its region; then save."}</CardDescription>
-          <CardAction>
+          <CardAction className="flex gap-2">
+            {sides.length > 1 && (
+              <ToggleGroup type="single" variant="outline" size="sm" value={side} onValueChange={(x) => x && setSide(x as Side)} aria-label="side">
+                {sides.map((sd) => <ToggleGroupItem key={sd} value={sd} className="px-3 text-xs">{sd === "back" ? "Back" : "Front"}</ToggleGroupItem>)}
+              </ToggleGroup>
+            )}
             <Select value={variant} onValueChange={setVariant}>
               <SelectTrigger size="sm" className="w-[170px]"><SelectValue /></SelectTrigger>
               <SelectContent>{def.variants.map((x) => <SelectItem key={x.id} value={x.id}>{x.name}</SelectItem>)}</SelectContent>
@@ -310,16 +356,29 @@ function LayoutTab({ id, def, onChange, readOnly }: { id: string; def: CardFamil
           </CardAction>
         </CardHeader>
         <CardContent>
-          <RoiEditor image={image} fields={def.fields} onChange={(fields) => onChange({ ...def, fields })} readOnly={readOnly} />
-          {!ref && <p className="text-review mt-2 text-xs">No reference image for this variant — showing its body colour. Upload references for an exact layout.</p>}
+          {sideFields.length ? (
+            <RoiEditor
+              key={side}
+              image={image}
+              fields={sideFields}
+              onChange={(changed) => onChange({ ...def, fields: def.fields.map((f) => changed.find((c) => c.name === f.name) ?? f) })}
+              readOnly={readOnly}
+            />
+          ) : (
+            <div className="relative">
+              <RoiEditor image={image} fields={[]} onChange={() => {}} readOnly />
+              <p className="text-muted-foreground mt-2 text-xs">No fields are read from the {side}. It is used for identification only.</p>
+            </div>
+          )}
+          {!ref && <p className="text-review mt-2 text-xs">No {side} reference image for this variant — showing {side === "front" ? "its body colour" : "a placeholder"}. Upload references for an exact layout.</p>}
         </CardContent>
       </Card>
       <Card className="gap-3">
         <CardHeader><CardTitle className="text-sm">Regions</CardTitle></CardHeader>
         <CardContent className="space-y-2 text-xs">
           {def.fields.map((f) => (
-            <div key={f.name} className="flex justify-between gap-2 border-b pb-1.5 last:border-0">
-              <span>{f.name}</span>
+            <div key={f.name} className={`flex justify-between gap-2 border-b pb-1.5 last:border-0 ${(f.side ?? "front") !== side ? "opacity-50" : ""}`}>
+              <span className="flex items-center gap-1">{f.name}{sides.length > 1 && <SideBadge side={f.side ?? "front"} />}</span>
               <span className="text-muted-foreground font-mono">{f.roi.map((x) => x.toFixed(2)).join(", ")}</span>
             </div>
           ))}

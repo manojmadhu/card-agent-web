@@ -96,23 +96,28 @@ export default function CardsPage() {
             </TableHeader>
             <TableBody>
               {items.map((c) => {
-                const missing = c.variants.filter((v) => v.reference_images === 0)
+                const two = (c.sides?.length ?? 1) > 1
+                // two-sided programmes: a variant is incomplete when any side has no references
+                const missing = two ? c.variants.filter((v) => c.sides!.some((sd) => !(v.reference_images_by_side?.[sd] ?? 0))) : c.variants.filter((v) => v.reference_images === 0)
                 return (
                   <TableRow key={c.family} className="cursor-pointer" onClick={() => nav(`/cards/${c.family}`)} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && nav(`/cards/${c.family}`)}>
                     <TableCell>
-                      <div className="font-medium">{c.name}</div>
+                      <div className="flex items-center gap-1.5 font-medium">{c.name}{two && <Badge variant="outline" className="h-5 px-1.5 text-[10px]">front + back</Badge>}</div>
                       <div className="text-muted-foreground font-mono text-xs">{c.family} · {c.issuer}</div>
                     </TableCell>
                     <TableCell><Badge variant="outline" className="font-mono">{c.country}</Badge></TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1.5">
                         {c.variants.map((v) => (
-                          <Badge key={v.id} variant="outline" className={v.reference_images ? "" : "border-review/60 bg-review/10"}>
-                            {v.name} <span className="tabular text-muted-foreground ml-1">{v.reference_images}</span>
+                          <Badge key={v.id} variant="outline" className={missing.includes(v) ? "border-review/60 bg-review/10" : ""} title={two ? c.sides!.map((sd) => `${sd}: ${v.reference_images_by_side?.[sd] ?? 0}`).join(" · ") : undefined}>
+                            {v.name}{" "}
+                            <span className="tabular text-muted-foreground ml-1">
+                              {two ? c.sides!.map((sd) => `${sd[0].toUpperCase()} ${v.reference_images_by_side?.[sd] ?? 0}`).join(" · ") : v.reference_images}
+                            </span>
                           </Badge>
                         ))}
                       </div>
-                      {missing.length > 0 && <div className="text-review mt-1 flex items-center gap-1 text-xs"><AlertTriangle className="size-3" /> {missing.length} variant(s) without reference images</div>}
+                      {missing.length > 0 && <div className="text-review mt-1 flex items-center gap-1 text-xs"><AlertTriangle className="size-3" /> {missing.length} variant(s) without reference images{two ? " on a side" : ""}</div>}
                     </TableCell>
                     <TableCell><SourceBadge source={c.source} /></TableCell>
                     <TableCell className="text-muted-foreground text-right text-xs">{relTime(c.updated_at)}</TableCell>
