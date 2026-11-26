@@ -29,9 +29,18 @@ const go = async (hash) => {
   await page.waitForTimeout(600)
 }
 
+// Toasts pause while hovered; a toast over the next button would then never leave. Like a person,
+// move the pointer away and let open toasts close before each step.
+async function settle() {
+  if (!page) return
+  await page.mouse.move(2, 2).catch(() => {})
+  await page.waitForFunction(() => !document.querySelector("[data-sonner-toast]"), null, { timeout: 10000 }).catch(() => {})
+}
+
 async function step(name, fn) {
   const t0 = Date.now()
   try {
+    await settle()
     await fn()
     results.push({ name, ok: true, ms: Date.now() - t0 })
     console.log(`  ✓ ${name} (${Date.now() - t0} ms)`)

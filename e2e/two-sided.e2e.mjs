@@ -67,6 +67,24 @@ await step("one photo is still the default (field image)", async () => {
   if (!(await page.getByRole("radio", { name: "One photo" }).getAttribute("aria-checked")).includes("true")) throw new Error("One photo is not the default")
 })
 
+await step("processing animation plays while validating and clears with the result", async () => {
+  // hold the stream briefly so the running state can be observed (a local server answers in ~1 s)
+  const slow = async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue() }
+  await page.route("**/v1/cards/validate/stream**", slow)
+  await page.getByLabel("Card photo photo").setInputFiles(photo("gamma_gold_front.jpg"))
+  await page.getByRole("button", { name: /^Validate$/ }).click()
+  await page.waitForSelector("[data-testid=card-scanning]", { timeout: 5000 })
+  const y = () => page.evaluate(() => document.querySelector(".card-scan-beam").getBoundingClientRect().top - document.querySelector("[data-testid=card-scanning]").getBoundingClientRect().top)
+  const y1 = await y(); await page.waitForTimeout(300); const y2 = await y()
+  if (Math.abs(y2 - y1) < 2) throw new Error(`scan beam is not moving (${y1} → ${y2})`)
+  const label = await page.locator("[data-testid=card-scanning] [role=status]").innerText()
+  if (!/…$/.test(label)) throw new Error(`no stage label: '${label}'`)
+  await waitRe(/Card accepted automatically|A person must decide|Card rejected/)
+  if (await page.locator("[data-testid=card-scanning]").count()) throw new Error("animation still shown after the result")
+  await page.unroute("**/v1/cards/validate/stream**", slow)
+  await page.getByLabel("remove Card photo").click()
+})
+
 await step("front and back → ACCEPT, both straightened photos, fields by side", async () => {
   await mode("Front and back")
   await page.getByLabel("Front photo").setInputFiles(photo("gamma_gold_front.jpg"))

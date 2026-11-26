@@ -139,5 +139,33 @@
 }
 .step-running { animation: step-pulse 1.2s ease-in-out infinite; }
 
+/* Card processing effect (CardOverlay while a validation runs) */
+@keyframes card-scan-sweep { from { top: 0%; } to { top: 100%; } }
+@keyframes card-scan-corner { 0%, 100% { opacity: .55; transform: scale(1); } 50% { opacity: 1; transform: scale(1.12); } }
+@keyframes card-scan-frame { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--chart-4) 35%, transparent); } 50% { box-shadow: 0 0 0 4px color-mix(in oklch, var(--chart-4) 0%, transparent); } }
+.card-scan-frame { animation: card-scan-frame 1.8s ease-in-out infinite; border-color: color-mix(in oklch, var(--chart-4) 55%, transparent); }
+.card-scan-grid {
+  background-image:
+    linear-gradient(color-mix(in oklch, var(--chart-4) 18%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklch, var(--chart-4) 18%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+  background-color: color-mix(in oklch, var(--chart-4) 6%, transparent);
+}
+.card-scan-beam { top: 0; height: 0; animation: card-scan-sweep 1.6s cubic-bezier(.45, 0, .55, 1) infinite alternate; }
+.card-scan-glow {
+  position: absolute; inset-inline: 0; height: 4.5rem; transform: translateY(-50%);
+  background: linear-gradient(to bottom, transparent, color-mix(in oklch, var(--chart-4) 30%, transparent) 50%, transparent);
+}
+.card-scan-line {
+  position: absolute; inset-inline: 0; height: 2px; transform: translateY(-50%);
+  background: linear-gradient(90deg, transparent, var(--chart-4) 12%, white 50%, var(--chart-4) 88%, transparent);
+  box-shadow: 0 0 10px 2px color-mix(in oklch, var(--chart-4) 70%, transparent);
+}
+.card-scan-corner { animation: card-scan-corner 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .card-scan-beam { animation: none; top: 50%; opacity: .5; }
+  .card-scan-corner, .card-scan-frame { animation: none; }
+}
+
 .cm-editor { font-size: 12.5px; height: 100%; }
 .cm-editor .cm-scroller { font-family: var(--font-mono); }

@@ -6,6 +6,26 @@ import type { StepState, StreamPhoto, StreamSnapshot, ValidationResult } from "@
 
 export const STEP_IDS = ["ingest", "quality", "normalise", "ocr", "embed", "search", "family", "variant", "fields", "rules", "decision"] as const
 
+const STAGE_TEXT: Record<string, string> = {
+  ingest: "Receiving the photo…",
+  quality: "Checking photo quality…",
+  normalise: "Finding and straightening the card…",
+  ocr: "Reading the text…",
+  embed: "Computing the card fingerprint…",
+  search: "Comparing with reference cards…",
+  family: "Identifying the programme…",
+  variant: "Identifying the tier…",
+  fields: "Reading the fields…",
+  rules: "Checking the rules…",
+  decision: "Making the decision…",
+}
+
+/** Plain-language label of the stage in progress (the running step, else the next pending one). */
+export function stageLabel(steps: StepState[]): string {
+  const cur = steps.find((x) => x.status === "running") ?? steps.find((x) => x.status === "pending")
+  return (cur && STAGE_TEXT[cur.id]) ?? "Processing…"
+}
+
 export const pendingSteps = (): StepState[] => STEP_IDS.map((id) => ({ id, status: "pending", summary: "", ms: 0, detail: null }))
 
 export interface StreamState {

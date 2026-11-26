@@ -19,7 +19,7 @@ import { FlowStrip, StepTimeline } from "@/components/pipeline"
 import { CardOverlay } from "@/components/card-overlay"
 import { DecisionHeadline, ResultDetails, ResultSummary } from "@/components/result-view"
 import { SideBadge } from "@/components/photos"
-import { newRequestId, useValidationStream } from "@/lib/use-validation-stream"
+import { newRequestId, stageLabel, useValidationStream } from "@/lib/use-validation-stream"
 import { pairFiles, type CardGroup } from "@/lib/pairing"
 import { api, photoCount, type CardPhotos } from "@/api/endpoints"
 import type { Side, ValidationResult } from "@/api/types"
@@ -128,6 +128,7 @@ function PhotoSlot({ label, hint, slot, onPick, onClear, highlight, side }: { la
 
 function SingleValidate() {
   const s = useValidationStream()
+  const stage = s.running ? stageLabel(s.steps) : undefined
   const qc = useQueryClient()
   const [mode, setMode] = React.useState<Mode>("one")
   const [slots, setSlots] = React.useState<Partial<Record<SlotKey, Slot>>>({})
@@ -321,11 +322,11 @@ function SingleValidate() {
                         )}
                       </div>
                     )}
-                    <CardOverlay src={p.url} rois={p.rois?.map((f) => ({ name: f.name, roi: f.roi, ok: f.ok }))} scanning={s.running} />
+                    <CardOverlay src={p.url} rois={p.rois?.map((f) => ({ name: f.name, roi: f.roi, ok: f.ok }))} scanning={s.running} stage={stage} />
                   </div>
                 ))
               : inputs.length
-                ? inputs.map(([k, v]) => <CardOverlay key={k} src={v.url} scanning={s.running} />)
+                ? inputs.map(([k, v]) => <CardOverlay key={k} src={v.url} scanning={s.running} stage={stage} />)
                 : <CardOverlay src={null} />}
           </CardContent>
         </Card>
