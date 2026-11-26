@@ -27,3 +27,4 @@ dist-ssr
 e2e/screenshots/
 samples/
 .env
+e2e/screenshots-*/

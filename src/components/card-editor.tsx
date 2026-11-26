@@ -99,15 +99,17 @@ export function CardForm({ value, onChange, sections = ["identity", "variants", 
   const sideIds: Side[] = value.sides?.length ? value.sides.map((x) => x.id) : ["front"]
   const twoSided = sideIds.length > 1
 
+  // Layouts respond to the form's own width (@container), not the window: the same form is shown
+  // full-width on the programme page and in half a column next to the layout editor in the wizard.
   return (
-    <div className="space-y-4">
+    <div className="@container space-y-4">
       {sections.includes("identity") && (
         <Card>
           <CardHeader>
             <CardTitle>Programme identity</CardTitle>
             <CardDescription>Keywords prove the programme in the OCR text (English and Arabic); negative keywords rule out look-alikes.</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-2">
+          <CardContent className="grid gap-4 @xl:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Programme id</Label>
               <Input value={value.id} disabled={lockId} onChange={(e) => set("id", e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ""))} placeholder="ae.fazaa" className="font-mono" />
@@ -159,17 +161,17 @@ export function CardForm({ value, onChange, sections = ["identity", "variants", 
             </CardAction>
           </CardHeader>
           <CardContent className="space-y-2">
-            <div className="text-muted-foreground hidden grid-cols-[52px_130px_1fr_1fr_90px_36px] gap-2 px-1 text-[11px] uppercase lg:grid">
+            <div className="text-muted-foreground hidden grid-cols-[52px_130px_minmax(0,1fr)_minmax(0,1fr)_90px_36px] gap-2 px-1 text-[11px] uppercase @3xl:grid">
               <span>Colour</span><span>Id</span><span>Name</span><span>Tier keywords</span><span>Prefix</span><span />
             </div>
             {value.variants.map((v, i) => (
-              <div key={i} className="grid items-center gap-2 rounded-lg border p-2 lg:grid-cols-[52px_130px_1fr_1fr_90px_36px]">
+              <div key={i} className="grid grid-cols-[52px_minmax(0,1fr)_36px] items-center gap-2 rounded-lg border p-2 @3xl:grid-cols-[52px_130px_minmax(0,1fr)_minmax(0,1fr)_90px_36px]">
                 <input type="color" value={rgbHex(v.body_color_rgb)} onChange={(e) => setV(i, { body_color_rgb: hexRgb(e.target.value) })} className="h-9 w-full cursor-pointer rounded-md border bg-transparent p-0.5" aria-label={`${v.id} body colour`} />
-                <Input value={v.id} onChange={(e) => setV(i, { id: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "") })} className="font-mono" aria-label="variant id" />
-                <Input value={v.name} onChange={(e) => setV(i, { name: e.target.value })} aria-label="variant name" />
-                <TagInput value={v.keywords} onChange={(k) => setV(i, { keywords: k })} placeholder="GOLD, ذهبية" />
-                <Input value={v.number_prefix ?? ""} onChange={(e) => setV(i, { number_prefix: e.target.value.replace(/\D/g, "") || null })} className="font-mono" placeholder="—" aria-label="number prefix" />
-                <Button size="icon" variant="ghost" disabled={value.variants.length <= 1} onClick={() => set("variants", value.variants.filter((_, j) => j !== i))} aria-label="remove variant"><Trash2 /></Button>
+                <Input value={v.id} onChange={(e) => setV(i, { id: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "") })} className="font-mono" aria-label="variant id" placeholder="id" />
+                <Input value={v.name} onChange={(e) => setV(i, { name: e.target.value })} aria-label="variant name" placeholder="Display name" className="col-span-3 @3xl:col-span-1" />
+                <div className="col-span-3 min-w-0 @3xl:col-span-1"><TagInput value={v.keywords} onChange={(k) => setV(i, { keywords: k })} placeholder="Tier keywords: GOLD, ذهبية" /></div>
+                <Input value={v.number_prefix ?? ""} onChange={(e) => setV(i, { number_prefix: e.target.value.replace(/\D/g, "") || null })} className="col-span-2 font-mono @3xl:col-span-1" placeholder="Number prefix (optional)" aria-label="number prefix" />
+                <Button size="icon" variant="ghost" className="row-start-1 col-start-3 @3xl:col-start-auto @3xl:row-start-auto" disabled={value.variants.length <= 1} onClick={() => set("variants", value.variants.filter((_, j) => j !== i))} aria-label="remove variant"><Trash2 /></Button>
               </div>
             ))}
           </CardContent>
@@ -191,17 +193,26 @@ export function CardForm({ value, onChange, sections = ["identity", "variants", 
           </CardHeader>
           <CardContent className="space-y-2">
             {value.fields.map((f, i) => (
-              <div key={i} className="space-y-2 rounded-lg border p-2">
-                <div className={cn("grid grid-cols-2 items-end gap-2", twoSided ? "md:grid-cols-[minmax(0,1fr)_110px_150px_110px_100px_auto_auto]" : "md:grid-cols-[minmax(0,1fr)_150px_110px_100px_auto_auto]")}>
-                  <Field label="name"><Input value={f.name} onChange={(e) => setF(i, { name: e.target.value })} className="font-mono" /></Field>
+              <div key={i} className="space-y-2 rounded-lg border p-3">
+                <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+                  <Field label="name" className="min-w-[9rem] flex-1">
+                    <Input value={f.name} onChange={(e) => setF(i, { name: e.target.value })} className="font-mono" aria-label="field name" />
+                  </Field>
                   {twoSided && (
-                    <Field label="side">
+                    <Field label="side" className="w-[7.5rem] shrink-0">
                       <Select value={f.side ?? "front"} onValueChange={(v) => setF(i, { side: v as Side })}>
                         <SelectTrigger className="w-full" aria-label={`${f.name} side`}><SelectValue /></SelectTrigger>
                         <SelectContent>{sideIds.map((sd) => <SelectItem key={sd} value={sd}>{sd === "back" ? "Back" : "Front"}</SelectItem>)}</SelectContent>
                       </Select>
                     </Field>
                   )}
+                  <div className="flex h-9 shrink-0 items-center gap-2">
+                    <Switch checked={f.required} onCheckedChange={(c) => setF(i, { required: c })} id={`req-${i}`} />
+                    <Label htmlFor={`req-${i}`} className="text-xs whitespace-nowrap">required</Label>
+                  </div>
+                  <Button size="icon" variant="ghost" className="ml-auto shrink-0" onClick={() => set("fields", value.fields.filter((_, j) => j !== i))} aria-label={`remove field ${f.name}`}><Trash2 /></Button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 @lg:grid-cols-3">
                   <Field label="normalise">
                     <Select value={f.normalise} onValueChange={(v) => setF(i, { normalise: v as FieldSpec["normalise"] })}>
                       <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
@@ -214,18 +225,13 @@ export function CardForm({ value, onChange, sections = ["identity", "variants", 
                       <SelectContent><SelectItem value="latin">latin</SelectItem><SelectItem value="arabic">arabic</SelectItem></SelectContent>
                     </Select>
                   </Field>
-                  <Field label="anchor"><Input value={f.anchor ?? ""} onChange={(e) => setF(i, { anchor: e.target.value || null })} className="font-mono text-xs" placeholder="EXP" /></Field>
-                  <div className="flex h-9 items-center gap-1.5">
-                    <Switch checked={f.required} onCheckedChange={(c) => setF(i, { required: c })} id={`req-${i}`} />
-                    <Label htmlFor={`req-${i}`} className="text-xs">required</Label>
-                  </div>
-                  <Button size="icon" variant="ghost" onClick={() => set("fields", value.fields.filter((_, j) => j !== i))} aria-label="remove field"><Trash2 /></Button>
+                  <Field label="anchor" className="col-span-2 @lg:col-span-1"><Input value={f.anchor ?? ""} onChange={(e) => setF(i, { anchor: e.target.value || null })} className="font-mono text-xs" placeholder="EXP" /></Field>
                 </div>
-                <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+                <div className="grid gap-2 @4xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
                   <Field label="roi [x0, y0, x1, y1]">
                     <div className="grid grid-cols-4 gap-1">
                       {f.roi.map((r, k) => (
-                        <Input key={k} type="number" step={0.01} min={0} max={1} value={r} onChange={(e) => setF(i, { roi: f.roi.map((x, j) => (j === k ? +e.target.value : x)) as FieldSpec["roi"] })} className="min-w-0 px-1.5 font-mono text-xs" />
+                        <Input key={k} type="number" step={0.01} min={0} max={1} value={r} onChange={(e) => setF(i, { roi: f.roi.map((x, j) => (j === k ? +e.target.value : x)) as FieldSpec["roi"] })} className="min-w-0 px-2 font-mono text-xs" aria-label={`${f.name} ${["x0", "y0", "x1", "y1"][k]}`} />
                       ))}
                     </div>
                   </Field>
@@ -250,7 +256,7 @@ export function CardForm({ value, onChange, sections = ["identity", "variants", 
           </CardHeader>
           <CardContent className="space-y-2">
             {value.rules.map((r, i) => (
-              <div key={i} className="grid items-center gap-2 rounded-lg border p-2 md:grid-cols-[210px_180px_minmax(0,1fr)_auto_36px]">
+              <div key={i} className="grid grid-cols-2 items-center gap-2 rounded-lg border p-2 @3xl:grid-cols-[210px_180px_minmax(0,1fr)_auto_36px]">
                 <Select value={r.type} onValueChange={(v) => setR(i, { type: v as RuleSpec["type"], params: v === "date_order" ? { other_field: value.fields[0]?.name } : v === "length" ? { min: 1, max: 32 } : {} })}>
                   <SelectTrigger className="w-full font-mono text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -263,12 +269,12 @@ export function CardForm({ value, onChange, sections = ["identity", "variants", 
                   <SelectTrigger className="w-full"><SelectValue placeholder="field" /></SelectTrigger>
                   <SelectContent>{value.fields.map((f) => <SelectItem key={f.name} value={f.name}>{f.name}</SelectItem>)}</SelectContent>
                 </Select>
-                <RuleParams rule={r} fields={value.fields} onChange={(params) => setR(i, { params })} />
+                <div className="col-span-2 min-w-0 @3xl:col-span-1"><RuleParams rule={r} fields={value.fields} onChange={(params) => setR(i, { params })} /></div>
                 <div className="flex items-center gap-1.5">
                   <Switch checked={r.critical} onCheckedChange={(c) => setR(i, { critical: c })} id={`crit-${i}`} />
                   <Label htmlFor={`crit-${i}`} className="text-xs">critical</Label>
                 </div>
-                <Button size="icon" variant="ghost" onClick={() => set("rules", value.rules.filter((_, j) => j !== i))} aria-label="remove rule"><Trash2 /></Button>
+                <Button size="icon" variant="ghost" className="justify-self-end" onClick={() => set("rules", value.rules.filter((_, j) => j !== i))} aria-label="remove rule"><Trash2 /></Button>
               </div>
             ))}
             {!value.rules.length && <p className="text-muted-foreground text-sm">No rules: any identified card with readable required fields would be accepted.</p>}
@@ -297,7 +303,7 @@ function SidesSection({ value, onChange }: { value: CardFamily; onChange: (c: Ca
         <CardDescription>Where the programme prints its data. A side is required when a required field is printed on it; the agent then asks for a photo of that side (SIDE_REQUIRED).</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 @lg:grid-cols-2">
           {[
             { on: false, title: "Front only", text: "Everything needed is on the front. One photo per card." },
             { on: true, title: "Front and back", text: "Data on both sides, or only on the back. Each field says which side it is on." },
@@ -308,7 +314,7 @@ function SidesSection({ value, onChange }: { value: CardFamily; onChange: (c: Ca
             </button>
           ))}
         </div>
-        <div className={cn("grid gap-3", two && "sm:grid-cols-2")}>
+        <div className={cn("grid gap-3", two && "@2xl:grid-cols-2")}>
           {eff.map((sd) => {
             const declared = value.sides?.find((x) => x.id === sd.id)?.required
             return (
@@ -357,12 +363,12 @@ function RuleParams({ rule, fields, onChange }: { rule: RuleSpec; fields: FieldS
         <Input type="number" className="h-8 w-16" value={Number(rule.params?.max ?? "")} onChange={(e) => onChange({ ...rule.params, max: Number(e.target.value) })} />
       </div>
     )
-  return <span className="text-muted-foreground truncate text-xs">{RULE_HELP[rule.type]}</span>
+  return <span className="text-muted-foreground block truncate text-xs" title={RULE_HELP[rule.type]}>{RULE_HELP[rule.type]}</span>
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className="space-y-1">
+    <div className={cn("min-w-0 space-y-1", className)}>
       <Label className="text-muted-foreground text-[11px]">{label}</Label>
       {children}
     </div>

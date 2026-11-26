@@ -267,11 +267,11 @@ function Header() {
     <header className="bg-background/95 supports-[backdrop-filter]:bg-background/80 sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 rounded-t-xl border-b px-4 backdrop-blur">
       <SidebarTrigger className="-ml-1" />
       <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
-      <h2 className="truncate text-sm font-medium">{title}</h2>
-      <div className="ml-auto flex items-center gap-2">
-        <Button variant="outline" size="sm" className="text-muted-foreground hidden w-56 justify-start sm:flex" onClick={() => setCmd(true)}>
-          <Search /> Go to…
-          <Kbd className="ml-auto">Ctrl K</Kbd>
+      <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        <Button variant="outline" size="sm" className="text-muted-foreground hidden justify-start sm:flex xl:w-56" onClick={() => setCmd(true)} aria-label="Go to… (Ctrl K)">
+          <Search /> <span className="hidden xl:inline">Go to…</span>
+          <Kbd className="ml-auto hidden xl:inline-flex">Ctrl K</Kbd>
         </Button>
         <HealthPill />
         <Tooltip>
